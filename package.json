@@ -1,7 +1,8 @@
 {
   "name": "http-snapshotter",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Snapshot HTTP requests for tests (node.js)",
+  "main": "index.cjs",
   "exports": {
     "import": "./index.mjs",
     "require": "./index.js"
