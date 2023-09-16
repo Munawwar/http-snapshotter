@@ -2,6 +2,8 @@
 
 Take snapshots of HTTP requests for purpose of tests (on node.js).
 
+Use-case: Let's say you are testing a server end-point, that makes several external network requests before giving a response. In a unit test you would want any external network call to be stubbed/mocked. What one wants is to test the end-point for a fixed input and fixed responses of external network calls. Stubs take quite a while to write, rather create snapshots of the requests automatically by HTTP Snapshotter and only write test code for the end-point input and output.
+
 WARNING: This module isn't concurrent or thread safe yet. You can only use it on serial test runners like `tape`.
 
 Example (test.js):

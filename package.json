@@ -1,6 +1,6 @@
 {
   "name": "http-snapshotter",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Snapshot HTTP requests for tests (node.js)",
   "main": "index.cjs",
   "exports": {
