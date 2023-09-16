@@ -34,9 +34,8 @@ const { resolve } = require('node:path');
 // Environment variable SNAPSHOT = update / ignore / read (default)
 const SNAPSHOT = process.env.SNAPSHOT || 'read';
 const LOG_REQ = process.env.LOG_REQ === '1' || process.env.LOG_REQ === 'true';
-const defaultSnapshotDirectory = resolve(__dirname, 'http-snapshots');
 const unusedSnapshotsLogFile = 'unused-snapshots.log';
-let snapshotDirectory = defaultSnapshotDirectory;
+let snapshotDirectory = null;
 
 /**
  * @typedef SnapshotText
@@ -77,22 +76,12 @@ const identity = (response) => response;
 
 const defaultKeyDerivationProps = ['method', 'url', 'body'];
 async function defaultSnapshotFileNameGenerator(request) {
-  let filePrefix;
-
   const url = new URL(request.url);
-  if (url.hostname === 'dynamodb.eu-west-1.amazonaws.com') {
-    filePrefix = [
-      'dynamodb',
-      slugify(request.headers?.get?.('x-amz-target')?.split?.('.')?.pop?.() || ''),
-      slugify(JSON.parse(await request.clone().text())?.TableName),
-    ].filter(Boolean).join('-');
-  } else {
-    filePrefix = [
-      request.method.toLowerCase(),
-      slugify(url.hostname),
-      slugify(url.pathname.replace('.json', '')),
-    ].filter(Boolean).join('-');
-  }
+  const filePrefix = [
+    request.method.toLowerCase(),
+    slugify(url.hostname),
+    slugify(url.pathname.replace('.json', '')),
+  ].filter(Boolean).join('-');
 
   // Input data
   const dataList = await Promise.all(
@@ -309,15 +298,18 @@ function attachResponseTransformer(func) {
   responseTransformer = func;
 }
 
-// Remove response transformer
-function removeResponseTransformer() {
+// Reset response transformer
+function resetResponseTransformer() {
   responseTransformer = identity;
 }
 
 // Start the interceptor
 function start({
-  snapshotDirectory: _snapshotDirectory = defaultSnapshotDirectory,
-} = { snapshotDirectory: defaultSnapshotDirectory }) {
+  snapshotDirectory: _snapshotDirectory = null,
+} = { snapshotDirectory: null }) {
+  if (!_snapshotDirectory) {
+    throw new Error('Please specify full path to a directory for storing/reading snapshots');
+  }
   snapshotDirectory = _snapshotDirectory;
   let dirCreatePromise;
 
@@ -370,11 +362,10 @@ function stop() {
 // Singleton - as it makes sense only one interceptor be active at any given moment.
 module.exports = {
   defaultSnapshotFileNameGenerator,
-  snapshotFileNameGenerator,
   attachSnapshotFilenameGenerator,
   resetSnapshotFilenameGenerator,
   attachResponseTransformer,
-  removeResponseTransformer,
+  resetResponseTransformer,
   start,
   stop,
 };
