@@ -1,15 +1,13 @@
-import test from "tape";
-import { fileURLToPath } from "node:url";
-import { resolve, dirname } from "node:path";
-import { start } from "../index.js";
+const test = require("tape");
+const { resolve } = require("node:path");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const { start } = require("../index.js");
+
 const snapshotDirectory = resolve(__dirname, "http-snapshots");
 
-await start({ snapshotDirectory });
+start({ snapshotDirectory });
 
-test("Latest XKCD comic (ESM)", async (t) => {
+test("Latest XKCD comic (CJS)", async (t) => {
   const res = await fetch("https://xkcd.com/info.0.json");
   const json = await res.json();
 

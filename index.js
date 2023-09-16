@@ -23,17 +23,13 @@
  * More docs at the end of this file, find the exported methods.
  */
 // Tested with @mswjs/interceptors v0.24.1
-import { BatchInterceptor } from '@mswjs/interceptors'
-import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
-import { FetchInterceptor } from '@mswjs/interceptors/fetch';
-import slugify from '@sindresorhus/slugify';
-import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { resolve, dirname } from 'node:path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const { BatchInterceptor } = require('@mswjs/interceptors');
+const { ClientRequestInterceptor } = require('@mswjs/interceptors/ClientRequest');
+const { FetchInterceptor } = require('@mswjs/interceptors/fetch');
+const slugify = require('@sindresorhus/slugify');
+const { createHash } = require('node:crypto');
+const { promises: fs } = require('node:fs');
+const { resolve } = require('node:path');
 
 // Environment variable SNAPSHOT = update / ignore / read (default)
 const SNAPSHOT = process.env.SNAPSHOT || 'read';
@@ -372,7 +368,7 @@ function stop() {
 }
 
 // Singleton - as it makes sense only one interceptor be active at any given moment.
-export {
+module.exports = {
   defaultSnapshotFileNameGenerator,
   snapshotFileNameGenerator,
   attachSnapshotFilenameGenerator,
