@@ -1,6 +1,6 @@
 # HTTP Snapshotter
 
-Take snapshots of HTTP requests for purpose of tests.
+Take snapshots of HTTP requests for purpose of tests (on node.js).
 
 WARNING: This module isn't concurrent or thread safe yet. You can only use it on serial test runners like `tape`.
 
@@ -16,7 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const snapshotDirectory = resolve(__dirname, "http-snapshots");
 
-await start({ snapshotDirectory });
+start({ snapshotDirectory });
 
 test("Latest XKCD comic (ESM)", async (t) => {
   const res = await fetch("https://xkcd.com/info.0.json");
@@ -32,14 +32,18 @@ To create snapshots the first time run:
 SNAPSHOT=update node test.js
 ```
 
-You will see a file named `get-xkcd-com-info-0-arAlFb5gfcr9aCN.json` created in the `http-snapshots` directory.
-
-e.g.
+You will see a file named `get-xkcd-com-info-0-arAlFb5gfcr9aCN.json` created in the `http-snapshots` directory. Commit this directory to source control.
 
 Then onwards running: `node test.js` or `SNAPSHOT=read node test.js` will ensure HTTP network calls are all read from a snapshot file.
-It will prevent any real HTTP calls from happening by failing the test (if it didn't have a snapshot file).
+In this mode, http-snapshotter will prevent any real HTTP calls from happening by failing the test (if it didn't have a snapshot file) and print out the request details and the snapshot file name it should have had.
 
-## About snapshot files and its name
+There is also a `SNAPSHOT=ignore` option to neither read nor write from snapshot files and do real network requests instead. This could be useful while writing a new test.
+
+Tip: When you do `SNAPSHOT=update` to create snapshots, run it against a single test, so you know what exact snapshots that one test created.
+
+Finally after getting all your tests to use snapshots, run your test runner against all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files.
+
+## About snapshot files and its names
 
 A snapshot file name unique identifies a request. By default it is a combination of HTTP method + URL + body that makes a request unique.
 The hash of concatenated HTTP method + URL + body makes the file name suffix.
