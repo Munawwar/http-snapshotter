@@ -1,0 +1,28 @@
+{
+  "name": "http-snapshotter",
+  "version": "0.0.1",
+  "description": "Snapshot HTTP requests for tests (node.js)",
+  "type": "module",
+  "exports": {
+    "import": "./index.js",
+    "require": "./index.cjs"
+  },
+  "scripts": {
+    "test": "tape tests/**/*.test.* | tap-diff"
+  },
+  "keywords": [
+    "snapshot",
+    "testing"
+  ],
+  "author": "Munawwar",
+  "license": "MIT",
+  "dependencies": {
+    "@mswjs/interceptors": "^0.24.1",
+    "@sindresorhus/slugify": "^1.1.2"
+  },
+  "devDependencies": {
+    "tap-diff": "^0.1.1",
+    "tape": "^5.6.6",
+    "typescript": "^5.2.2"
+  }
+}
