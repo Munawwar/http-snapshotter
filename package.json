@@ -1,6 +1,6 @@
 {
   "name": "http-snapshotter",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Snapshot HTTP requests for tests (node.js)",
   "main": "index.cjs",
   "exports": {
@@ -16,6 +16,10 @@
   ],
   "author": "Munawwar",
   "license": "MIT",
+  "homepage": "https://github.com/Munawwar/http-snapshotter",
+  "bugs": {
+    "url": "https://github.com/Munawwar/http-snapshotter/issues"
+  },
   "dependencies": {
     "@mswjs/interceptors": "^0.24.1",
     "@sindresorhus/slugify": "^1.1.2"
