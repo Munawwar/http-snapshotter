@@ -45,6 +45,8 @@ Tip: When you do `SNAPSHOT=update` to create snapshots, run it against a single 
 
 Finally after getting all your tests to use snapshots, run your test runner against all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files.
 
+The tests of this library uses this library itself, check the `tests/` directory and try the tests `npm ci; npm test`.
+
 ## About snapshot files and its names
 
 A snapshot file name unique identifies a request. By default it is a combination of HTTP method + URL + body that makes a request unique.

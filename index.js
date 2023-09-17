@@ -35,6 +35,9 @@ const { resolve } = require('node:path');
 const SNAPSHOT = process.env.SNAPSHOT || 'read';
 const LOG_REQ = process.env.LOG_REQ === '1' || process.env.LOG_REQ === 'true';
 const unusedSnapshotsLogFile = 'unused-snapshots.log';
+/**
+ * @type {import("node:fs").PathLike | null}
+ */
 let snapshotDirectory = null;
 
 /**
@@ -72,9 +75,13 @@ let snapshotDirectory = null;
  * @typedef {SnapshotText | SnapshotJson} Snapshot
  */
 
+/** @type {(res: any) => any} */
 const identity = (response) => response;
 
 const defaultKeyDerivationProps = ['method', 'url', 'body'];
+/**
+ * @param {Request} request 
+ */
 async function defaultSnapshotFileNameGenerator(request) {
   const url = new URL(request.url);
   const filePrefix = [
@@ -89,6 +96,7 @@ async function defaultSnapshotFileNameGenerator(request) {
       if (key === 'body') {
         return request.clone().text();
       }
+      // @ts-ignore
       return request[key];
     }),
   );
@@ -124,7 +132,7 @@ async function getSnapshotFileName(request) {
   const fileName = `${filePrefix}-${hash}.json`;
 
   return {
-    absoluteFilePath: resolve(snapshotDirectory, fileName),
+    absoluteFilePath: resolve(/** @type {string} */ (snapshotDirectory), fileName),
     fileName,
     filePrefix,
     fileSuffixKey,
@@ -180,7 +188,9 @@ async function saveSnapshot(request, response) {
   return fileName;
 }
 
+/** @type {Record<string, Snapshot>} */
 const snapshotCache = {};
+
 /**
  * @param {Request} request
  */
@@ -230,7 +240,9 @@ async function enforceSnapshotResponse(request) {
   } = snapshot;
 
   let newResponse = new Response(
-    responseType === 'json' ? JSON.stringify(body) : body,
+    responseType === 'json'
+      ? JSON.stringify(body)
+      : /** @type {string} */ (body),
     {
       status,
       statusText,
@@ -246,8 +258,10 @@ async function enforceSnapshotResponse(request) {
   return newResponse;
 }
 
+/** @typedef {import('@mswjs/interceptors/ClientRequest').ClientRequestInterceptor} ClientRequestInterceptorType */
+/** @typedef {import('@mswjs/interceptors/fetch').FetchInterceptor} FetchInterceptorType */
 /**
- * @type {import('@mswjs/interceptors').BatchInterceptor|null}
+ * @type {import('@mswjs/interceptors').BatchInterceptor<(ClientRequestInterceptorType|FetchInterceptorType)[]>|null}
  */
 let interceptor = null;
 
@@ -258,22 +272,24 @@ process.on('beforeExit', async () => {
     beforeExitEventSeen = true;
     let files;
     try {
+      // @ts-ignore
       files = await fs.readdir(snapshotDirectory);
     } catch (err) {
       return;
     }
+    let dir = /** @type {string} */(snapshotDirectory);
     unusedFiles = files.filter((file) => !readFiles.has(file) && file !== unusedSnapshotsLogFile);
     if (unusedFiles.length) {
       await fs
         .writeFile(
-          resolve(snapshotDirectory, unusedSnapshotsLogFile),
+          resolve(dir, unusedSnapshotsLogFile),
           unusedFiles.join('\n'),
           'utf-8',
         )
         .catch((err) => console.error(err));
     } else {
       await fs
-        .unlink(resolve(snapshotDirectory, unusedSnapshotsLogFile))
+        .unlink(resolve(dir, unusedSnapshotsLogFile))
         .catch((err) => {
           if (err.code !== 'ENOENT') {
             console.error(err);
@@ -283,27 +299,60 @@ process.on('beforeExit', async () => {
   }
 });
 
-// Attach snapshot filename generator function
+/**
+ * Attach snapshot filename generator function
+ * 
+ * Here's your opportunity to uniquely identify a request with a snapshot file name.
+ * The default generator uses HTTP method, slugified URL (check @sindresorhus/slugify
+ * npm package) as the file name prefix
+ * And <HTTP method>#<url>#<body text> concatenated as file name suffix key
+ * (which then is SHA256 hashed and the hash is used as the actual file name suffix).
+ *
+ * Use cases (not limited to):
+ * 1. if a request body has a dynamic random id or timestamp, you can remove it from
+ * cache key computation
+ * 2. if a specific test does not use the default snapshot, you can prefix the snapshot
+ * file name for the test.
+ *
+ * WARNING: Attaching a function on a per-test basis may not be concurrent safe. i.e. If you tests
+ * run sequentially, then it is safe. But if your test runner runs test suites concurrently,
+ * then it is better to attach a function only once ever.
+ * @param {(req: Request) => Promise<{ filePrefix: string, fileSuffixKey: string }>} func
+ */
 function attachSnapshotFilenameGenerator(func) {
   snapshotFileNameGenerator = func;
 }
 
-// Reset snapshot filename generator to default
+/** Reset snapshot filename generator to default */
 function resetSnapshotFilenameGenerator() {
   snapshotFileNameGenerator = defaultSnapshotFileNameGenerator;
 }
 
-// Attach response transformer function
+/**
+ * Attach response transformer function.
+ * 
+ * Here is an opportunity to modify the response (loaded from snapshot) on-the-fly right before
+ * the response is sent to consumers.
+ *
+ * WARNING: Attaching a function on a per-test basis may not be concurrent safe. i.e. If you tests
+ * run sequentially, then it is safe. But if your test runner runs test suites concurrently,
+ * then it is better to attach a function only once ever.
+ * @param {(response: Response, request: Request) => Promise<Response>} func
+ */
 function attachResponseTransformer(func) {
   responseTransformer = func;
 }
 
-// Reset response transformer
+/** Reset response transformer */
 function resetResponseTransformer() {
   responseTransformer = identity;
 }
 
-// Start the interceptor
+/**
+ * Start the interceptor
+ * @param {object} opts
+ * @param {string|null} opts.snapshotDirectory Full absolute path to snapshot directory
+ */
 function start({
   snapshotDirectory: _snapshotDirectory = null,
 } = { snapshotDirectory: null }) {
@@ -311,6 +360,9 @@ function start({
     throw new Error('Please specify full path to a directory for storing/reading snapshots');
   }
   snapshotDirectory = _snapshotDirectory;
+  /**
+   * @type {Promise<any>|undefined}
+   */
   let dirCreatePromise;
 
   interceptor = new BatchInterceptor({
@@ -321,37 +373,43 @@ function start({
     ],
   });
 
+  // @ts-ignore
   interceptor.on('request', async ({ request }) => {
     if (SNAPSHOT === 'read') {
       await enforceSnapshotResponse(request);
     }
   });
-  interceptor.on('response', async ({ request, response }) => {
-    if (SNAPSHOT === 'update') {
-      if (!dirCreatePromise) {
-        dirCreatePromise = fs.mkdir(snapshotDirectory, { recursive: true });
+  interceptor.on(
+    // @ts-ignore
+    'response',
+    /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
+    async ({ request, response }) => {
+      if (SNAPSHOT === 'update') {
+        if (!dirCreatePromise) {
+          dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
+        }
+        await dirCreatePromise;
+        saveSnapshot(request, response);
       }
-      await dirCreatePromise;
-      saveSnapshot(request, response);
-    }
-    if (LOG_REQ) {
-      const { fileName, fileSuffixKey } = await getSnapshotFileName(request);
-      console.debug('Request', {
-        request: {
-          url: request.url,
-          method: request.method,
-          headers: Object.fromEntries([...request.headers.entries()]),
-          body: await request.clone().text(),
-        },
-        wouldBeFileName: fileName,
-        wouldBeFileSuffixKey: fileSuffixKey,
-      });
-    }
-  });
+      if (LOG_REQ) {
+        const { fileName, fileSuffixKey } = await getSnapshotFileName(request);
+        console.debug('Request', {
+          request: {
+            url: request.url,
+            method: request.method,
+            headers: Object.fromEntries([...request.headers.entries()]),
+            body: await request.clone().text(),
+          },
+          wouldBeFileName: fileName,
+          wouldBeFileSuffixKey: fileSuffixKey,
+        });
+      }
+    },
+  );
   interceptor.apply();
 }
 
-// Stop the interceptor
+/** Stop the interceptor */
 function stop() {
   if (interceptor) {
     interceptor.dispose();
