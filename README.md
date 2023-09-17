@@ -41,7 +41,7 @@ In this mode, http-snapshotter will prevent any real HTTP calls from happening b
 
 There is also a `SNAPSHOT=ignore` option to neither read nor write from snapshot files and do real network requests instead. This could be useful while writing a new test.
 
-Tip: When you do `SNAPSHOT=update` to create snapshots, run it against a single test, so you know what exact snapshots that one test created.
+Tip: When you do `SNAPSHOT=update` to create snapshots, run it against a single test, so you know what exact snapshots that one test created/updated.
 
 Finally after getting all your tests to use snapshots, run your test runner against all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files.
 
@@ -49,8 +49,8 @@ The tests of this library uses this library itself, check the `tests/` directory
 
 ## About snapshot files and its names
 
-A snapshot file name unique identifies a request. By default it is a combination of HTTP method + URL + body that makes a request unique.
-The hash of concatenated HTTP method + URL + body makes the file name suffix.
+A snapshot file name uniquely identifies a request. By default it is a combination of HTTP method + URL + body that makes a request unique.
+A SHA256 hash of concatenated HTTP method + URL + body makes the file name suffix.
 
 However you may want to specially handle some requests. e.g. DynamoDB calls also need the `x-amz-target` header to uniquely identify the request,
 because every call is a POST call with DynamoDB. You can add logic to create better snapshot files for this case:
