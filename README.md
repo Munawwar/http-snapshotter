@@ -134,7 +134,7 @@ test('Test behavior on a free account', async (t) => {
         }
       )
     }
-    // 
+ 
     return response;
   };
   attachResponseTransformer(interceptResponse);
