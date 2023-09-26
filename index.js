@@ -140,7 +140,15 @@ async function getSnapshotFileName(request) {
 }
 
 // NOTE: This isn't going to work on a test runner that uses multiple processes / workers
-const alreadyWrittenFiles = new Set();
+/**
+ * @typedef {Promise<{
+ *  snapshot: Snapshot,
+ *  absoluteFilePath: string,
+ *  fileName: string
+ * }>} ReadSnapshotReturnType
+ */
+/** @type {Map<string, ReadSnapshotReturnType>} */
+const alreadyWrittenFiles = new Map();
 const readFiles = new Set();
 
 /**
@@ -152,40 +160,48 @@ async function saveSnapshot(request, response) {
   // console.log(fileName);
 
   // Prevent multiple tests from having same snapshot
-  if (alreadyWrittenFiles.has(absoluteFilePath)) return fileName;
-  alreadyWrittenFiles.add(absoluteFilePath);
-
-  let body;
-  /** @type {'text' | 'json'} */
-  let responseType;
-  const contentType = response.headers.get('content-type') || '';
-  if (contentType.includes('application/json') || contentType.includes('application/x-amz-json-1.0')) {
-    responseType = 'json';
-    body = await response.clone().json();
-  } else {
-    responseType = 'text';
-    body = await response.clone().text();
+  if (alreadyWrittenFiles.has(absoluteFilePath)) {
+    return /** @type {ReadSnapshotReturnType} */ (alreadyWrittenFiles.get(absoluteFilePath));
   }
-  /** @type {Snapshot} */
-  const snapshot = {
-    request: {
-      method: request.method,
-      url: request.url,
-      headers: [...request.headers.entries()],
-      body: await request.clone().text(),
-    },
-    responseType,
-    response: {
-      status: response.status,
-      statusText: response.statusText,
-      headers: [...response.headers.entries()],
-      body,
-    },
-    fileSuffixKey,
+
+  /** @returns {ReadSnapshotReturnType} */
+  const saveFreshSnapshot = async () => {
+    let body;
+    /** @type {'text' | 'json'} */
+    let responseType;
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json') || contentType.includes('application/x-amz-json-1.0')) {
+      responseType = 'json';
+      body = await response.clone().json();
+    } else {
+      responseType = 'text';
+      body = await response.clone().text();
+    }
+    /** @type {Snapshot} */
+    const snapshot = {
+      request: {
+        method: request.method,
+        url: request.url,
+        headers: [...request.headers.entries()],
+        body: await request.clone().text(),
+      },
+      responseType,
+      response: {
+        status: response.status,
+        statusText: response.statusText,
+        headers: [...response.headers.entries()],
+        body,
+      },
+      fileSuffixKey,
+    };
+    const json = JSON.stringify(snapshot, null, 2);
+    await fs.writeFile(absoluteFilePath, json, 'utf-8');
+    return { snapshot, absoluteFilePath, fileName };
   };
-  const json = JSON.stringify(snapshot, null, 2);
-  await fs.writeFile(absoluteFilePath, json, 'utf-8');
-  return fileName;
+
+  const savePromise = saveFreshSnapshot();
+  alreadyWrittenFiles.set(absoluteFilePath, savePromise);
+  return savePromise;
 }
 
 /** @type {Record<string, Snapshot>} */
@@ -194,7 +210,7 @@ const snapshotCache = {};
 /**
  * @param {Request} request
  */
-async function enforceSnapshotResponse(request) {
+async function readSnapshot(request) {
   const { absoluteFilePath, fileName, fileSuffixKey } = await getSnapshotFileName(request);
   // console.log(fileName);
 
@@ -221,14 +237,22 @@ async function enforceSnapshotResponse(request) {
       } else {
         // @ts-ignore
         console.error('Error reading network snapshot file:', err.message);
+        throw err;
       }
-      return null;
     }
     snapshotCache[absoluteFilePath] = JSON.parse(json);
     readFiles.add(fileName);
   }
 
   const snapshot = snapshotCache[absoluteFilePath];
+  return { snapshot, absoluteFilePath, fileName };
+}
+
+/**
+ * @param {Request} request
+ * @param {Snapshot} snapshot
+ */
+async function sendResponse(request, snapshot) {
   const {
     responseType,
     response: {
@@ -256,6 +280,23 @@ async function enforceSnapshotResponse(request) {
   // @ts-ignore
   request.respondWith(newResponse);
   return newResponse;
+}
+
+/**
+ * @param {Request} request
+ */
+async function readSnapshotAndSendResponse(request) {
+  const { snapshot } = await readSnapshot(request);
+  return sendResponse(request, snapshot);
+}
+
+/**
+ * @param {Request} request
+ * @param {Response} response
+ */
+async function saveSnapshotAndSendResponse(request, response) {
+  const { snapshot } = await saveSnapshot(request, response);
+  return sendResponse(request, snapshot);
 }
 
 /** @typedef {import('@mswjs/interceptors/ClientRequest').ClientRequestInterceptor} ClientRequestInterceptorType */
@@ -376,7 +417,7 @@ function start({
   // @ts-ignore
   interceptor.on('request', async ({ request }) => {
     if (SNAPSHOT === 'read') {
-      await enforceSnapshotResponse(request);
+      await readSnapshotAndSendResponse(request);
     }
   });
   interceptor.on(
@@ -384,13 +425,6 @@ function start({
     'response',
     /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
     async ({ request, response }) => {
-      if (SNAPSHOT === 'update') {
-        if (!dirCreatePromise) {
-          dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
-        }
-        await dirCreatePromise;
-        saveSnapshot(request, response);
-      }
       if (LOG_REQ) {
         const { fileName, fileSuffixKey } = await getSnapshotFileName(request);
         console.debug('Request', {
@@ -403,6 +437,13 @@ function start({
           wouldBeFileName: fileName,
           wouldBeFileSuffixKey: fileSuffixKey,
         });
+      }
+      if (SNAPSHOT === 'update') {
+        if (!dirCreatePromise) {
+          dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
+        }
+        await dirCreatePromise;
+        await saveSnapshotAndSendResponse(request, response);
       }
     },
   );
