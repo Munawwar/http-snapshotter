@@ -171,11 +171,17 @@ async function saveSnapshot(request, response) {
     let responseType;
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('application/json') || contentType.includes('application/x-amz-json-1.0')) {
-      responseType = 'json';
-      body = await response.clone().json();
+      try {
+        // most common JSON parse failure is when body is empty.
+        body = await response.clone().json();
+        responseType = 'json';
+      } catch (err) {
+        body = await response.clone().text();
+        responseType = 'text';
+      }
     } else {
-      responseType = 'text';
       body = await response.clone().text();
+      responseType = 'text';
     }
     /** @type {Snapshot} */
     const snapshot = {
