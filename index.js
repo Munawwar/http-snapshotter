@@ -42,13 +42,14 @@ let snapshotDirectory = null;
 
 /**
  * @typedef SnapshotText
- * @property {'text'} responseType
  * @property {string} fileSuffixKey
+ * @property {'json'|'text'} requestType
  * @property {object} request
  * @property {string} request.method
  * @property {string} request.url
  * @property {string[][]} request.headers
- * @property {string|undefined} request.body
+ * @property {string|object|undefined} request.body
+ * @property {'text'} responseType
  * @property {object} response
  * @property {number} response.status
  * @property {string} response.statusText
@@ -57,13 +58,14 @@ let snapshotDirectory = null;
  */
 /**
  * @typedef SnapshotJson
- * @property {'json'} responseType
  * @property {string} fileSuffixKey
+ * @property {'json'|'text'} requestType
  * @property {object} request
  * @property {string} request.method
  * @property {string} request.url
  * @property {string[][]} request.headers
- * @property {string|undefined} request.body
+ * @property {string|object|undefined} request.body
+ * @property {'json'} responseType
  * @property {object} response
  * @property {number} response.status
  * @property {string} response.statusText
@@ -166,37 +168,55 @@ async function saveSnapshot(request, response) {
 
   /** @returns {ReadSnapshotReturnType} */
   const saveFreshSnapshot = async () => {
-    let body;
+    let requestBody;
+    let responseBody;
+
+    /** @type {'text' | 'json'} */
+    let requestType;
+    const reqContentType = request.headers.get('content-type') || '';
+    if (reqContentType.includes('application/json') || reqContentType.includes('application/x-amz-json-1.0')) {
+      try {
+        requestBody = await request.clone().json();
+        requestType = 'json';
+      } catch (err) {
+        requestBody = await request.clone().text();
+        requestType = 'text';
+      }
+    } else {
+      requestBody = await request.clone().text();
+      requestType = 'text';
+    }
+
     /** @type {'text' | 'json'} */
     let responseType;
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json') || contentType.includes('application/x-amz-json-1.0')) {
+    const resContentType = response.headers.get('content-type') || '';
+    if (resContentType.includes('application/json') || resContentType.includes('application/x-amz-json-1.0')) {
       try {
-        // most common JSON parse failure is when body is empty.
-        body = await response.clone().json();
+        responseBody = await response.clone().json();
         responseType = 'json';
       } catch (err) {
-        body = await response.clone().text();
+        responseBody = await response.clone().text();
         responseType = 'text';
       }
     } else {
-      body = await response.clone().text();
+      responseBody = await response.clone().text();
       responseType = 'text';
     }
     /** @type {Snapshot} */
     const snapshot = {
+      requestType,
       request: {
         method: request.method,
         url: request.url,
         headers: [...request.headers.entries()],
-        body: await request.clone().text(),
+        body: requestBody,
       },
       responseType,
       response: {
         status: response.status,
         statusText: response.statusText,
         headers: [...response.headers.entries()],
-        body,
+        body: responseBody,
       },
       fileSuffixKey,
     };
