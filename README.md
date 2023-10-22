@@ -2,9 +2,19 @@
 
 Take snapshots of HTTP requests for purpose of tests (on node.js).
 
-Use-case: Let's say you are testing a server end-point, that makes several external network requests before giving a response. In a unit test you would want any external network call to be stubbed/mocked. What one wants is to test the end-point for a fixed input and fixed responses of external network calls. Stubs take quite a while to write, rather create snapshots of the requests automatically by HTTP Snapshotter and only write test code for the end-point input and output.
+Use-case: Let's say you are testing a server end-point, that makes several external HTTP requests for producing a response. In a unit test you would want predictable inputs for any external network calls.
 
-WARNING: This module isn't concurrent or thread safe yet. You can only use it on serial test runners like `tape`.
+To have predictable inputs to external requests there are 2 popular approaches:
+1. Mock / Stub the methods that make the network requests with a library like `sinon.js`
+2. Use a mock service.
+
+However stubs / fakes take quite a while to write. And a mock service is an additional piece to deploy and maintain. 
+
+Presenting you another solution:
+3. Create snapshots of the requests automatically the first time you run your test and then replay the snapshot responses on future runs of the test.
+Additionally with the approach, with predictability and speed in mind, one wouldn't want any real network request from being made; and if it does happen, then the test should fail.
+
+WARNING: This module isn't concurrent or thread safe yet. You can only use it on serial test runners like `tape`. If you use `ava`, you need to convert tests to run serially with `test.serial()`.
 
 Example (test.js):
 
@@ -43,17 +53,17 @@ There is also a `SNAPSHOT=ignore` option to neither read nor write from snapshot
 
 Tip: When you do `SNAPSHOT=update` to create snapshots, run it against a single test, so you know what exact snapshots that one test created/updated.
 
-Finally after getting all your tests to use snapshots, run your test runner against all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files.
+Once you are done writing your tests, run your test runner on all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files.
 
 The tests of this library uses this library itself, check the `tests/` directory and try the tests `npm ci; npm test`.
 
 ## About snapshot files and its names
 
-A snapshot file name uniquely identifies a request. By default it is a combination of HTTP method + URL + body that makes a request unique.
-A SHA256 hash of concatenated HTTP method + URL + body makes the file name suffix.
+A snapshot file name uniquely identifies a request. By default it is a combination of HTTP method + URL + body that makes a request unique (headers are ignored).
+For example, take the filename `get-xkcd-com-info-0-arAlFb5gfcr9aCN.json` - The prefix `get-xkcd-com-info-0` is added just for readability, and the suffix `arAlFb5gfcr9aCN` is a SHA256 hash of concatenated HTTP method + URL + body string that makes the file name unique.
 
 However you may want to specially handle some requests. e.g. DynamoDB calls also need the `x-amz-target` header to uniquely identify the request,
-because every call is a POST call with DynamoDB. You can add logic to create better snapshot files for this case:
+because the header affects the response data. You can add logic to create better snapshot files for this case:
 
 ```js
 import {
@@ -72,28 +82,28 @@ async function mySnapshotFilenameGenerator(request) {
     return defaultSnapshotFileNameGenerator(request);
   }
 
-  // Make a more readable file name suffix
-  let filePrefix;
-  const xAmzHeader = request.headers?.get?.('x-amz-target')?.split?.('.')?.pop?.() || '';
-  filePrefix = [
+  // Use a snapshot file name like `dynamodb-get-item-table-name-sezQSulkfiNCk30.json`
+
+  // Make a more readable file name prefix (.e.g `dynamodb-get-item-table-name`)
+  const xAmzHeader = request.headers?.get('x-amz-target')?.split('.').pop() || '';
+  const filePrefix = [
     'dynamodb',
     slugify(xAmzHeader),
-    slugify(JSON.parse(await request.clone().text())?.TableName),
+    slugify((await request.clone().json())?.TableName),
   ].filter(Boolean).join('-');
 
-  // Input data
-  const dataList = await Promise.all(
-    ['url', 'body'].map((key) => {
-      if (key === 'body') {
-        return request.clone().text();
-      }
-      return request[key];
-    }),
-  );
+  // Make a unique suffix for this request
+  const fileSuffixKey = [
+    'dynamodb',
+    request.url,
+    xAmzHeader,
+    await request.clone().text(),
+  ].join('#');
 
   return {
     filePrefix,
-    fileSuffixKey: `${xAmzHeader}#${dataList.join('#')}`,
+    // this key will be hashed with SHA256 to make the final file suffix
+    fileSuffixKey,
   };
 }
 
@@ -102,9 +112,9 @@ attachSnapshotFilenameGenerator(mySnapshotFilenameGenerator);
 
 ## Same request, varied response
 
-There are scenarios where one needs to test varied response for the same call (.e.g GET /account).
+There are scenarios where one needs to test varied response for the same call (e.g GET /account).
 
-There are 2 ways to go about this.
+There are 2 ways to go about this:
 
 Method 1: The easy way it to not touch the existing snapshot file, and use `attachResponseTransformer` to
 change the response on runtime for the specific test:
@@ -147,11 +157,12 @@ test('Test behavior on a free account', async (t) => {
 });
 ```
 
-Method 2: Add a filename suffix for the specific test you are running and manually edit the new snapshot file (it is a regular JSON file)
+Method 2: By creating a new snapshot file, by adding a unique filename suffix for the specific test you are running.
+And then manually editing the new snapshot file (it is a regular JSON file).
 
-(building on the last attachSnapshotFilenameGenerator snippet)
-
+(building upon the last attachSnapshotFilenameGenerator snippet)
 ```js
+// test2.js
 test('Test behavior on a free account', async (t) => {
   attachSnapshotFilenameGenerator(async (request) => {
     const defaultReturn = mySnapshotFilenameGenerator();
@@ -170,9 +181,11 @@ test('Test behavior on a free account', async (t) => {
   // make fetch() call here
   // assert the test
 
-  // cleanup before moving to next test
+  // reset back to old function before moving to next test
   attachSnapshotFilenameGenerator(mySnapshotFilenameGenerator);
+  // You could alternatively `import { resetSnapshotFilenameGenerator } from "http-snapshotter"` and call
+  // resetSnapshotFilenameGenerator()
 });
 ```
 
-Now when you run `SNAPHOT=update node specific-test.js` you will get a snapshot file with `free-account-test-` as prefix. You can now edit the JSON response for this test.
+Now when you run `SNAPHOT=update node test2.js` you will get a snapshot file with `free-account-test-` as prefix. You can now edit the JSON response for this test.

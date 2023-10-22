@@ -1,12 +1,13 @@
 {
   "name": "http-snapshotter",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Snapshot HTTP requests for tests (node.js)",
   "main": "index.cjs",
   "types": "index.d.ts",
   "exports": {
     "import": "./index.mjs",
-    "require": "./index.js"
+    "require": "./index.js",
+    "types": "./index.d.ts"
   },
   "scripts": {
     "test": "tape tests/**/*.test.* | tap-diff",
