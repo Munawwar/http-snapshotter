@@ -53,6 +53,8 @@ There is also a `SNAPSHOT=ignore` option to neither read nor write from snapshot
 
 Tip: When you do `SNAPSHOT=update` to create snapshots, run it against a single test, so you know what exact snapshots that one test created/updated.
 
+Log read/saved snapshots by setting LOG_SNAPSHOT=1 env variable. Log requests with LOG_REQ=1 or LOG_REQ=summary (to just print request HTTP method, url and snapshot file that it would use).
+
 Once you are done writing your tests, run your test runner on all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files.
 
 The tests of this library uses this library itself, check the `tests/` directory and try the tests `npm ci; npm test`.

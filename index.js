@@ -13,11 +13,13 @@
  * Here onwards run test runner without SNAPSHOT env variable or SNAPSHOT=read
  * You can use SNAPSHOT=ignore to neither read not write snapshots, for testing on real
  * network operations.
+ * 
+ * Log read/saved snapshots by setting LOG_SNAPSHOT=1 env variable.
  *
  * Unused snapshot files will be written into a log file named 'unused-snapshots.log'.
  * You can delete those files manually.
- *
- * Log requests with LOG_REQ=1 env variable
+ * 
+ * Log requests with LOG_REQ=1 or LOG_REQ=summary (to just print summary) env variable
  * or node.js built-in NODE_DEBUG=http,http2
  *
  * More docs at the end of this file, find the exported methods.
@@ -33,7 +35,7 @@ const { resolve } = require('node:path');
 
 // Environment variable SNAPSHOT = update / ignore / read (default)
 const SNAPSHOT = process.env.SNAPSHOT || 'read';
-const LOG_REQ = process.env.LOG_REQ === '1' || process.env.LOG_REQ === 'true';
+const { LOG_REQ, LOG_SNAPSHOT } = process.env;
 const unusedSnapshotsLogFile = 'unused-snapshots.log';
 /**
  * @type {import("node:fs").PathLike | null}
@@ -159,11 +161,14 @@ const readFiles = new Set();
  */
 async function saveSnapshot(request, response) {
   const { absoluteFilePath, fileName, fileSuffixKey } = await getSnapshotFileName(request);
-  // console.log(fileName);
 
   // Prevent multiple tests from having same snapshot
   if (alreadyWrittenFiles.has(absoluteFilePath)) {
     return /** @type {ReadSnapshotReturnType} */ (alreadyWrittenFiles.get(absoluteFilePath));
+  }
+
+  if (LOG_SNAPSHOT) {
+    console.debug('Writing:', fileName);
   }
 
   /** @returns {ReadSnapshotReturnType} */
@@ -238,9 +243,11 @@ const snapshotCache = {};
  */
 async function readSnapshot(request) {
   const { absoluteFilePath, fileName, fileSuffixKey } = await getSnapshotFileName(request);
-  // console.log(fileName);
 
   if (!snapshotCache[absoluteFilePath]) {
+    if (LOG_SNAPSHOT) {
+      console.debug('Reading:', fileName);
+    }
     let json;
     try {
       json = await fs.readFile(absoluteFilePath, 'utf-8');
@@ -256,8 +263,8 @@ async function readSnapshot(request) {
             headers: Object.fromEntries([...request.headers.entries()]),
             body: reqBody,
           },
-          wouldBeFileSuffixKey: fileSuffixKey,
-          wouldBeFileName: fileName,
+          fileName,
+          fileSuffixKey,
         });
         throw new Error('Network request not mocked');
       } else {
@@ -453,16 +460,26 @@ function start({
     async ({ request, response }) => {
       if (LOG_REQ) {
         const { fileName, fileSuffixKey } = await getSnapshotFileName(request);
-        console.debug('Request', {
-          request: {
-            url: request.url,
-            method: request.method,
-            headers: Object.fromEntries([...request.headers.entries()]),
-            body: await request.clone().text(),
-          },
-          wouldBeFileName: fileName,
-          wouldBeFileSuffixKey: fileSuffixKey,
-        });
+        const summary = `----------\n${request.method} ${request.url}\nWould use file name: ${fileName}`;
+        if (LOG_REQ === 'summary') {
+          console.debug(summary);
+        } else {
+          console.debug(`${summary}\n----------\n`, {
+            request: {
+              url: request.url,
+              method: request.method,
+              headers: Object.fromEntries([...request.headers.entries()]),
+              body: await request.clone().text(),
+            },
+            response: {
+              status: response.status,
+              statusText: response.statusText,
+              headers: Object.fromEntries([...response.headers.entries()]),
+              body: await response.clone().text(),
+            },
+            wouldUseFileSuffixKey: fileSuffixKey,
+          });
+        }
       }
       if (SNAPSHOT === 'update') {
         if (!dirCreatePromise) {
