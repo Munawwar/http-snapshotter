@@ -79,8 +79,6 @@ let snapshotDirectory = null;
  * @typedef {SnapshotText | SnapshotJson} Snapshot
  */
 
-/** @type {(res: any) => any} */
-const identity = (response) => response;
 
 const defaultKeyDerivationProps = ['method', 'url', 'body'];
 /**
@@ -112,10 +110,6 @@ async function defaultSnapshotFileNameGenerator(request) {
 }
 
 // Dynamically changeable props
-/**
- * @type {(response: Response, request: Request) => Promise<Response>}
- */
-let responseTransformer = identity;
 /**
  * @type {(req: Request) => Promise<{ filePrefix: string, fileSuffixKey: string }>}
  */
@@ -296,7 +290,7 @@ async function sendResponse(request, snapshot) {
     },
   } = snapshot;
 
-  let newResponse = new Response(
+  const newResponse = new Response(
     responseType === 'json'
       ? JSON.stringify(body)
       : /** @type {string} */ (body),
@@ -306,8 +300,6 @@ async function sendResponse(request, snapshot) {
       headers: new Headers(/** @type HeadersInit */ (headers)),
     },
   );
-
-  newResponse = await responseTransformer(newResponse, request);
 
   // respondWith is a method added by @mswjs/interceptors
   // @ts-ignore
@@ -403,26 +395,6 @@ function resetSnapshotFilenameGenerator() {
 }
 
 /**
- * Attach response transformer function.
- * 
- * Here is an opportunity to modify the response (loaded from snapshot) on-the-fly right before
- * the response is sent to consumers.
- *
- * WARNING: Attaching a function on a per-test basis may not be concurrent safe. i.e. If you tests
- * run sequentially, then it is safe. But if your test runner runs test suites concurrently,
- * then it is better to attach a function only once ever.
- * @param {(response: Response, request: Request) => Promise<Response>} func
- */
-function attachResponseTransformer(func) {
-  responseTransformer = func;
-}
-
-/** Reset response transformer */
-function resetResponseTransformer() {
-  responseTransformer = identity;
-}
-
-/**
  * Start the interceptor
  * @param {object} opts
  * @param {string|null} opts.snapshotDirectory Full absolute path to snapshot directory
@@ -506,8 +478,6 @@ module.exports = {
   defaultSnapshotFileNameGenerator,
   attachSnapshotFilenameGenerator,
   resetSnapshotFilenameGenerator,
-  attachResponseTransformer,
-  resetResponseTransformer,
   start,
   stop,
 };

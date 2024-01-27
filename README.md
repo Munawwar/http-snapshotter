@@ -118,44 +118,42 @@ There are scenarios where one needs to test varied response for the same call (e
 
 There are 2 ways to go about this:
 
-Method 1: The easy way it to not touch the existing snapshot file, and use `attachResponseTransformer` to
-change the response on runtime for the specific test:
+Method 1: The easy way is to [intercept the function](https://gist.github.com/Munawwar/c1d024d20b78f19b3714ab09b62a0e1f) with your other test utilities:
 
 ```js
-import {
-  // ...
-  attachResponseTransformer,
-  resetResponseTransformer,
-} from "http-snapshotter";
+// setupIntercepts.js
+// Using intercept.js (https://gist.github.com/Munawwar/c1d024d20b78f19b3714ab09b62a0e1f)
+// Write all your intercepts in a single file for all tests.
+// This is safe because the default behavior of an intercept is
+// to call the original function.
+import { intercept } from "./intercept.js";
+import methods from './account.js';
+// intercept the get() method
+export const accountGet = intercept(methods, 'get');
+
+// test.js
+import { accountGet } from './setupIntercepts.js';
+// Next import the root function that you want to test, which
+// internally calls get() function from './account.js'
+import { enablePaidFeature } from './routes.js';
 
 test('Test behavior on a free account', async (t) => {
-  /**
-   * @param {Response} response https://developer.mozilla.org/en-US/docs/Web/API/Response
-   * @param {Request} request https://developer.mozilla.org/en-US/docs/Web/API/Request
-   */
-  const interceptResponse = async (response, request) => {
-    const url = new URL(request.url);
-    if (request.method === 'GET' && url.pathname === '/account') {
-      return new Response(
-        JSON.stringify({
-          ...(await response.clone().json()),
-          free_user: true,
-        }),
-        {
-          headers: response.headers
-        }
-      )
-    }
- 
-    return response;
-  };
-  attachResponseTransformer(interceptResponse);
+  // Setup mock to simulate a free user
+  accountGet.mock(async (originalAccountGetFunction, ...args) => {
+    const result = await originalAccountGetFunction(...args); // this will use the existing http snapshot
+    return {
+      ...result,
+      free_user: true,
+    };
+  });
 
-  // make fetch() call here
-  // assert the test
+  // write the test here
+  // t.assert(await enablePaidFeature(), { error: 'Free accounts do not have access to this paid feature' })
 
-  // cleanup before moving to next test
-  resetResponseTransformer();
+  // cleanup before moving to next test by calling undoMock()
+  // This won't destroy the intercept, but will revert the account get()
+  // function to call the original account get() function
+  accountGet.undoMock();
 });
 ```
 

@@ -1,12 +1,13 @@
 export type SnapshotText = {
-    responseType: 'text';
     fileSuffixKey: string;
+    requestType: 'json' | 'text';
     request: {
         method: string;
         url: string;
         headers: string[][];
-        body: string | undefined;
+        body: string | object | undefined;
     };
+    responseType: 'text';
     response: {
         status: number;
         statusText: string;
@@ -15,14 +16,15 @@ export type SnapshotText = {
     };
 };
 export type SnapshotJson = {
-    responseType: 'json';
     fileSuffixKey: string;
+    requestType: 'json' | 'text';
     request: {
         method: string;
         url: string;
         headers: string[][];
-        body: string | undefined;
+        body: string | object | undefined;
     };
+    responseType: 'json';
     response: {
         status: number;
         statusText: string;
@@ -31,6 +33,11 @@ export type SnapshotJson = {
     };
 };
 export type Snapshot = SnapshotText | SnapshotJson;
+export type ReadSnapshotReturnType = Promise<{
+    snapshot: Snapshot;
+    absoluteFilePath: string;
+    fileName: string;
+}>;
 export type ClientRequestInterceptorType = import('@mswjs/interceptors/ClientRequest').ClientRequestInterceptor;
 export type FetchInterceptorType = import('@mswjs/interceptors/fetch').FetchInterceptor;
 /**
@@ -66,20 +73,6 @@ export function attachSnapshotFilenameGenerator(func: (req: Request) => Promise<
 }>): void;
 /** Reset snapshot filename generator to default */
 export function resetSnapshotFilenameGenerator(): void;
-/**
- * Attach response transformer function.
- *
- * Here is an opportunity to modify the response (loaded from snapshot) on-the-fly right before
- * the response is sent to consumers.
- *
- * WARNING: Attaching a function on a per-test basis may not be concurrent safe. i.e. If you tests
- * run sequentially, then it is safe. But if your test runner runs test suites concurrently,
- * then it is better to attach a function only once ever.
- * @param {(response: Response, request: Request) => Promise<Response>} func
- */
-export function attachResponseTransformer(func: (response: Response, request: Request) => Promise<Response>): void;
-/** Reset response transformer */
-export function resetResponseTransformer(): void;
 /**
  * Start the interceptor
  * @param {object} opts
