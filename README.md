@@ -49,9 +49,9 @@ You will see a file named `get-xkcd-com-info-0-arAlFb5gfcr9aCN.json` created in 
 Then onwards running: `node test.js` or `SNAPSHOT=read node test.js` will ensure HTTP network calls are all read from a snapshot file.
 In this mode, http-snapshotter will prevent any real HTTP calls from happening by failing the test (if it didn't have a snapshot file) and print out the request details and the snapshot file name it should have had.
 
-There is also a `SNAPSHOT=ignore` option to neither read nor write from snapshot files and do real network requests instead. This could be useful while writing a new test.
+For adding new snapshots without touching existing snapshots use `SNAPSHOT=append`. There is also a `SNAPSHOT=ignore` option to neither read nor write from snapshot files and do real network requests instead. These could be useful while writing a new test.
 
-Tip: When you do `SNAPSHOT=update` to create snapshots, run it against a single test, so you know what exact snapshots that one test created/updated.
+Tip: When you do `SNAPSHOT=update` or `SNAPHOT=append` to create snapshots, run it against a single test, so you know what exact snapshots that one test created/updated.
 
 Log read/saved snapshots by setting LOG_SNAPSHOT=1 env variable. Log requests with LOG_REQ=1 or LOG_REQ=summary (to just print request HTTP method, url and snapshot file that it would use).
 

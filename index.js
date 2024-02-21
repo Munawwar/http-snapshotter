@@ -10,7 +10,9 @@
  * SNAPSHOT=update <test runner command>
  * e.g. SNAPSHOT=update tape tests/**\/*.js | tap-diff
  *
- * Here onwards run test runner without SNAPSHOT env variable or SNAPSHOT=read
+ * Here onwards run test runner without SNAPSHOT env variable or SNAPSHOT=read.
+ * For adding new snapshots without touching existing snapshots use SNAPSHOT=append.
+ *
  * You can use SNAPSHOT=ignore to neither read not write snapshots, for testing on real
  * network operations.
  * 
@@ -33,7 +35,7 @@ const { createHash } = require('node:crypto');
 const { promises: fs } = require('node:fs');
 const { resolve } = require('node:path');
 
-// Environment variable SNAPSHOT = update / ignore / read (default)
+// Environment variable SNAPSHOT = update / append / ignore / read (default)
 const SNAPSHOT = process.env.SNAPSHOT || 'read';
 const { LOG_REQ, LOG_SNAPSHOT } = process.env;
 const unusedSnapshotsLogFile = 'unused-snapshots.log';
@@ -249,6 +251,7 @@ async function readSnapshot(request) {
       // Fail any test that fires a real network request (without snapshot)
       // @ts-ignore
       if (err.code === 'ENOENT') {
+        if (SNAPSHOT === 'append') return {};
         const reqBody = await request.clone().text();
         console.error('No network snapshot found for request with cache keys:', {
           request: {
@@ -312,7 +315,10 @@ async function sendResponse(request, snapshot) {
  */
 async function readSnapshotAndSendResponse(request) {
   const { snapshot } = await readSnapshot(request);
-  return sendResponse(request, snapshot);
+  if (snapshot) {
+    return sendResponse(request, snapshot);
+  }
+  return undefined;
 }
 
 /**
@@ -421,7 +427,7 @@ function start({
 
   // @ts-ignore
   interceptor.on('request', async ({ request }) => {
-    if (SNAPSHOT === 'read') {
+    if (['read', 'append'].includes(SNAPSHOT)) {
       await readSnapshotAndSendResponse(request);
     }
   });
@@ -430,8 +436,8 @@ function start({
     'response',
     /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
     async ({ request, response }) => {
+      const { fileName, fileSuffixKey } = await getSnapshotFileName(request);
       if (LOG_REQ) {
-        const { fileName, fileSuffixKey } = await getSnapshotFileName(request);
         const summary = `----------\n${request.method} ${request.url}\nWould use file name: ${fileName}`;
         if (LOG_REQ === 'summary') {
           console.debug(summary);
@@ -453,7 +459,7 @@ function start({
           });
         }
       }
-      if (SNAPSHOT === 'update') {
+      if (SNAPSHOT === 'update' || (SNAPSHOT === 'append' && !readFiles.has(fileName))) {
         if (!dirCreatePromise) {
           dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
         }
