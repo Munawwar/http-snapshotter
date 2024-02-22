@@ -62,7 +62,7 @@ The tests of this library uses this library itself, check the `tests/` directory
 ## About snapshot files and its names
 
 A snapshot file name uniquely identifies a request. By default it is a combination of HTTP method + URL + body that makes a request unique (headers are ignored).
-For example, take the filename `get-xkcd-com-info-0-arAlFb5gfcr9aCN.json` - The prefix `get-xkcd-com-info-0` is added just for readability, and the suffix `arAlFb5gfcr9aCN` is a SHA256 hash of concatenated HTTP method + URL + body string that makes the file name unique.
+For example, take the filename `get-xkcd-com-info-0-arAlFb5gfcr9aCN.json` - The prefix `get-xkcd-com-info-0` is added just for readability, and the suffix `arAlFb5gfcr9aCN` is a SHA256 hash of concatenated HTTP method + URL + body of request that makes the file name unique.
 
 However you may want to specially handle some requests. e.g. DynamoDB calls also need the `x-amz-target` header to uniquely identify the request,
 because the header affects the response data. You can add logic to create better snapshot files for this case:
