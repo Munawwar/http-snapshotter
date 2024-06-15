@@ -1,0 +1,101 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://xkcd.com/info.0.json",
+    "headers": [],
+    "body": ""
+  },
+  "responseType": "json",
+  "response": {
+    "status": 200,
+    "statusText": "OK",
+    "headers": [
+      [
+        "accept-ranges",
+        "bytes"
+      ],
+      [
+        "age",
+        "228"
+      ],
+      [
+        "cache-control",
+        "max-age=300"
+      ],
+      [
+        "connection",
+        "keep-alive"
+      ],
+      [
+        "content-encoding",
+        "gzip"
+      ],
+      [
+        "content-length",
+        "287"
+      ],
+      [
+        "content-type",
+        "application/json"
+      ],
+      [
+        "date",
+        "Fri, 15 Sep 2023 18:26:59 GMT"
+      ],
+      [
+        "etag",
+        "W/\"65044c59-1c0\""
+      ],
+      [
+        "expires",
+        "Fri, 15 Sep 2023 12:28:00 GMT"
+      ],
+      [
+        "last-modified",
+        "Fri, 15 Sep 2023 12:21:45 GMT"
+      ],
+      [
+        "server",
+        "nginx"
+      ],
+      [
+        "vary",
+        "Accept-Encoding"
+      ],
+      [
+        "via",
+        "1.1 varnish, 1.1 varnish"
+      ],
+      [
+        "x-cache",
+        "HIT, HIT"
+      ],
+      [
+        "x-cache-hits",
+        "4250, 1"
+      ],
+      [
+        "x-served-by",
+        "cache-dfw-kdal2120106-DFW, cache-dxb1470033-DXB"
+      ],
+      [
+        "x-timer",
+        "S1694802419.108277,VS0,VE218"
+      ]
+    ],
+    "body": {
+      "month": "9",
+      "num": 2829,
+      "link": "",
+      "year": "2023",
+      "news": "",
+      "safe_title": "Iceberg Efficiency",
+      "transcript": "",
+      "alt": "Our experimental aerogel iceberg with helium pockets manages true 100% efficiency, barely touching the water, and it can even lift off of the surface and fly to more efficiently pursue fleeing hubristic liners.",
+      "img": "https://imgs.xkcd.com/comics/iceberg_efficiency.png",
+      "title": "Iceberg Efficiency",
+      "day": "15"
+    }
+  },
+  "fileSuffixKey": "GET#https://xkcd.com/info.0.json#"
+}

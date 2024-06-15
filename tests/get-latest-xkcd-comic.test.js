@@ -1,13 +1,12 @@
 const test = require("tape");
 const { resolve } = require("node:path");
 
-const { start } = require("../index.js");
+const { start, setSubDirectory, resetSubDirectory } = require("../index.js");
 
-const snapshotDirectory = resolve(__dirname, "http-snapshots");
-
-start({ snapshotDirectory });
+start({ snapshotDirectory: resolve(__dirname, "http-snapshots") });
 
 test("Latest XKCD comic (CJS)", async (t) => {
+  setSubDirectory('test-case-cjs');
   const res = await fetch("https://xkcd.com/info.0.json");
   const json = await res.json();
 
@@ -28,4 +27,5 @@ test("Latest XKCD comic (CJS)", async (t) => {
     },
     "must be deeply equal"
   );
+  resetSubDirectory();
 });

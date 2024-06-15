@@ -21,8 +21,8 @@
  * Unused snapshot files will be written into a log file named 'unused-snapshots.log'.
  * You can delete those files manually.
  * 
- * Log requests with LOG_REQ=1 or LOG_REQ=summary (to just print summary) env variable
- * or node.js built-in NODE_DEBUG=http,http2
+ * Log requests with LOG_REQ=1 or LOG_REQ=summary (to just print summary) or LOG_REQ=detailed
+ * (to print request details) env variable or node.js built-in NODE_DEBUG=http,http2
  *
  * More docs at the end of this file, find the exported methods.
  */
@@ -33,7 +33,7 @@ const { FetchInterceptor } = require('@mswjs/interceptors/fetch');
 const slugify = require('@sindresorhus/slugify');
 const { createHash } = require('node:crypto');
 const { promises: fs } = require('node:fs');
-const { resolve } = require('node:path');
+const { resolve, dirname, relative } = require('node:path');
 
 // Environment variable SNAPSHOT = update / append / ignore / read (default)
 const SNAPSHOT = process.env.SNAPSHOT || 'read';
@@ -116,6 +116,7 @@ async function defaultSnapshotFileNameGenerator(request) {
  * @type {(req: Request) => Promise<{ filePrefix: string, fileSuffixKey: string }>}
  */
 let snapshotFileNameGenerator = defaultSnapshotFileNameGenerator;
+let snapshotSubDirectory = '';
 
 /**
  * @param {Request} request
@@ -129,7 +130,7 @@ async function getSnapshotFileName(request) {
     .digest('base64url')
     .slice(0, 15);
 
-  const fileName = `${filePrefix}-${hash}.json`;
+  const fileName = `${snapshotSubDirectory ? `${snapshotSubDirectory}/` : ''}${filePrefix}-${hash}.json`;
 
   return {
     absoluteFilePath: resolve(/** @type {string} */ (snapshotDirectory), fileName),
@@ -150,14 +151,23 @@ async function getSnapshotFileName(request) {
 /** @type {Map<string, ReadSnapshotReturnType>} */
 const alreadyWrittenFiles = new Map();
 const readFiles = new Set();
+const existingSubDirectories = new Set();
 
 /**
- * @param {Request} request
- * @param {Response} response
+ * @param {object} param
+ * @param {Request} param.request
+ * @param {Response} param.response
+ * @param {string} param.absoluteFilePath
+ * @param {string} param.fileName
+ * @param {string} param.fileSuffixKey
  */
-async function saveSnapshot(request, response) {
-  const { absoluteFilePath, fileName, fileSuffixKey } = await getSnapshotFileName(request);
-
+async function saveSnapshot({
+  request,
+  response,
+  absoluteFilePath,
+  fileName,
+  fileSuffixKey,
+}) {
   // Prevent multiple tests from having same snapshot
   if (alreadyWrittenFiles.has(absoluteFilePath)) {
     return /** @type {ReadSnapshotReturnType} */ (alreadyWrittenFiles.get(absoluteFilePath));
@@ -222,6 +232,11 @@ async function saveSnapshot(request, response) {
       fileSuffixKey,
     };
     const json = JSON.stringify(snapshot, null, 2);
+    const dir = dirname(absoluteFilePath);
+    if (!existingSubDirectories.has(dir)) {
+      existingSubDirectories.add(dir);
+      await fs.mkdir(dir, { recursive: true });
+    }
     await fs.writeFile(absoluteFilePath, json, 'utf-8');
     return { snapshot, absoluteFilePath, fileName };
   };
@@ -321,15 +336,6 @@ async function readSnapshotAndSendResponse(request) {
   return undefined;
 }
 
-/**
- * @param {Request} request
- * @param {Response} response
- */
-async function saveSnapshotAndSendResponse(request, response) {
-  const { snapshot } = await saveSnapshot(request, response);
-  return sendResponse(request, snapshot);
-}
-
 /** @typedef {import('@mswjs/interceptors/ClientRequest').ClientRequestInterceptor} ClientRequestInterceptorType */
 /** @typedef {import('@mswjs/interceptors/fetch').FetchInterceptor} FetchInterceptorType */
 /**
@@ -342,15 +348,18 @@ let unusedFiles;
 process.on('beforeExit', async () => {
   if (SNAPSHOT === 'read' && !beforeExitEventSeen) {
     beforeExitEventSeen = true;
+    let dir = /** @type {string} */(snapshotDirectory);
+    /** @type {import('node:fs').Dirent[]} */
     let files;
     try {
-      // @ts-ignore
-      files = await fs.readdir(snapshotDirectory);
+      files = await fs.readdir(dir, { recursive: true, withFileTypes: true });
     } catch (err) {
       return;
     }
-    let dir = /** @type {string} */(snapshotDirectory);
-    unusedFiles = files.filter((file) => !readFiles.has(file) && file !== unusedSnapshotsLogFile);
+    unusedFiles = files
+      .filter((file) => file.isFile())
+      .map((file) => relative(dir, resolve(file.path, file.name)))
+      .filter((file) => (!readFiles.has(file) && file !== unusedSnapshotsLogFile)); 
     if (unusedFiles.length) {
       await fs
         .writeFile(
@@ -370,6 +379,20 @@ process.on('beforeExit', async () => {
     }
   }
 });
+
+/**
+ * Write/read snapshots to/from a sub directory. This isolates snapshots for a test.
+ * @param {string} directoryName Directory name relative to snapshot directory. It will be created if it doesn't exist.
+ */
+function setSubDirectory(directoryName) {
+  snapshotSubDirectory = directoryName;
+}
+/**
+ * Reset the directory to the root directory
+ */
+function resetSubDirectory() {
+  setSubDirectory('');
+}
 
 /**
  * Attach snapshot filename generator function
@@ -436,12 +459,12 @@ function start({
     'response',
     /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
     async ({ request, response }) => {
-      const { fileName, fileSuffixKey } = await getSnapshotFileName(request);
+      const { absoluteFilePath, fileName, fileSuffixKey } = await getSnapshotFileName(request);
       if (LOG_REQ) {
         const summary = `----------\n${request.method} ${request.url}\nWould use file name: ${fileName}`;
-        if (LOG_REQ === 'summary') {
+        if (LOG_REQ === '1' || LOG_REQ === 'summary') {
           console.debug(summary);
-        } else {
+        } else if (LOG_REQ === 'detailed') {
           console.debug(`${summary}\n----------\n`, {
             request: {
               url: request.url,
@@ -464,7 +487,9 @@ function start({
           dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
         }
         await dirCreatePromise;
-        await saveSnapshotAndSendResponse(request, response);
+        await saveSnapshot({
+          request, response, absoluteFilePath, fileName, fileSuffixKey,
+        });
       }
     },
   );
@@ -481,6 +506,8 @@ function stop() {
 
 // Singleton - as it makes sense only one interceptor be active at any given moment.
 module.exports = {
+  setSubDirectory,
+  resetSubDirectory,
   defaultSnapshotFileNameGenerator,
   attachSnapshotFilenameGenerator,
   resetSnapshotFilenameGenerator,

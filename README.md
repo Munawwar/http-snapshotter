@@ -11,10 +11,10 @@ To have predictable inputs to external requests there are 2 popular approaches:
 However stubs / fakes take quite a while to write. And a mock service is an additional piece to deploy and maintain. 
 
 Presenting you another solution:
-3. Create snapshots of the requests automatically the first time you run your test and then replay the snapshot responses on future runs of the test.
-Additionally with the approach, with predictability and speed in mind, one wouldn't want any real network request from being made; and if it does happen, then the test should fail.
 
-WARNING: This module isn't concurrent or thread safe yet. You can only use it on serial test runners like `tape`. If you use `ava`, you need to convert tests to run serially with `test.serial()`.
+3. Create snapshots of the requests automatically the first time you run your test and then replay the snapshot responses on future runs of the test.
+
+Additionally with the approach, with predictability and speed in mind, one wouldn't want any real network request from being made; and if it does happen, then the test should fail.
 
 Example (test.js):
 
@@ -24,11 +24,8 @@ import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { start } from "http-snapshotter";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const snapshotDirectory = resolve(__dirname, "http-snapshots");
-
-start({ snapshotDirectory });
+const __dirname = dirname(fileURLToPath(import.meta.url));
+start({ snapshotDirectory: resolve(__dirname, "http-snapshots") });
 
 test("Latest XKCD comic (ESM)", async (t) => {
   const res = await fetch("https://xkcd.com/info.0.json");
@@ -53,7 +50,7 @@ For adding new snapshots without touching existing snapshots use `SNAPSHOT=appen
 
 Tip: When you do `SNAPSHOT=update` or `SNAPHOT=append` to create snapshots, run it against a single test, so you know what exact snapshots that one test created/updated.
 
-Log read/saved snapshots by setting LOG_SNAPSHOT=1 env variable. Log requests with LOG_REQ=1 or LOG_REQ=summary (to just print request HTTP method, url and snapshot file that it would use).
+Log read/saved snapshots by setting LOG_SNAPSHOT=1 or LOG_SNAPSHOT=summary env variable. It prints the HTTP method, url and snapshot file that it would use. If you want even more details in the logs use LOG_REQ=detailed.
 
 Once you are done writing your tests, run your test runner on all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files.
 
@@ -189,3 +186,11 @@ test('Test behavior on a free account', async (t) => {
 ```
 
 Now when you run `SNAPHOT=update node test2.js` you will get a snapshot file with `free-account-test-` as prefix. You can now edit the JSON response for this test.
+
+## Concurrency
+
+WARNING: This module isn't concurrent or thread safe. Make sure that:
+
+1. within one worker only one test is being executed at a time. e.g. If you use `ava`, and you have multiple `test()` blocks in one file, you need to change it to run serially with `test.serial()`.
+
+2. parallel tests don't update the same snapshot file at the same time (i.e. while you run with SNAPSHOT=update). Regardless, updating snapshots of multiple tests at the same time is not a great idea in my opinion, because reviewing the snapshots files are a pain, escpecially if you have a shared snapshot files.
