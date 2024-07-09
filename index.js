@@ -384,14 +384,17 @@ process.on('beforeExit', async () => {
  * Write/read snapshots to/from a sub directory. This isolates snapshots for a test.
  * @param {string} directoryName Directory name relative to snapshot directory. It will be created if it doesn't exist.
  */
-function setSubDirectory(directoryName) {
+function startTestCase(directoryName) {
+  if (snapshotSubDirectory) {
+    throw new Error(`Cannot start test case '${directoryName}' as test case '${snapshotSubDirectory}' is already running.`); 
+  }
   snapshotSubDirectory = directoryName;
 }
 /**
  * Reset the directory to the root directory
  */
-function resetSubDirectory() {
-  setSubDirectory('');
+function endTestCase() {
+  snapshotSubDirectory = '';
 }
 
 /**
@@ -506,8 +509,8 @@ function stop() {
 
 // Singleton - as it makes sense only one interceptor be active at any given moment.
 module.exports = {
-  setSubDirectory,
-  resetSubDirectory,
+  startTestCase,
+  endTestCase,
   defaultSnapshotFileNameGenerator,
   attachSnapshotFilenameGenerator,
   resetSnapshotFilenameGenerator,

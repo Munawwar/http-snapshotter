@@ -1,13 +1,9 @@
 import test from "tape";
-import { fileURLToPath } from "node:url";
-import { resolve, dirname } from "node:path";
-import { start, setSubDirectory, resetSubDirectory } from "../index.mjs";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-start({ snapshotDirectory: resolve(__dirname, "http-snapshots") });
+import './setup.js';
+import { startTestCase, endTestCase } from "../index.mjs";
 
 test("Latest XKCD comic (ESM)", async (t) => {
-  setSubDirectory('test-case-esm');
+  startTestCase('test-case-esm');
   const res = await fetch("https://xkcd.com/info.0.json");
   const json = await res.json();
 
@@ -28,5 +24,5 @@ test("Latest XKCD comic (ESM)", async (t) => {
     },
     "must be deeply equal"
   );
-  resetSubDirectory();
+  endTestCase();
 });

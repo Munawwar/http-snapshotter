@@ -22,16 +22,18 @@ Example (test.js):
 import test from "tape";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
-import { start } from "http-snapshotter";
+import { start, startTestCase, endTestCase } from "http-snapshotter";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 start({ snapshotDirectory: resolve(__dirname, "http-snapshots") });
 
 test("Latest XKCD comic (ESM)", async (t) => {
+  startTestCase('test-case-1');
   const res = await fetch("https://xkcd.com/info.0.json");
   const json = await res.json();
 
   t.deepEquals(json.title, "Iceberg Efficiency", "must be equal");
+  endTestCase();
 });
 ```
 
