@@ -54,7 +54,7 @@ Tip: When you do `SNAPSHOT=update` or `SNAPHOT=append` to create snapshots, run 
 
 Log read/saved snapshots by setting LOG_SNAPSHOT=1 or LOG_SNAPSHOT=summary env variable. It prints the HTTP method, url and snapshot file that it would use. If you want even more details in the logs use LOG_REQ=detailed.
 
-Once you are done writing your tests, run your test runner on all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files.
+Once you are done writing your tests, run your test runner on all your tests and then take a look at `<snapshots directory>/unused-snapshots.log` file to see which snapshot files haven't been used by your final test suite. You can delete unused snapshot files. You can delete the snapshots with `cd <snapshots directory>; xargs -d '\n' rm -v < unused-snapshots.log`
 
 The tests of this library uses this library itself, check the `tests/` directory and try the tests `npm ci; npm test`.
 

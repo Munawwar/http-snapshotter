@@ -81,7 +81,7 @@ let snapshotDirectory = null;
  * @typedef {SnapshotText | SnapshotJson} Snapshot
  */
 
-const dynamodbHostNameRegex = /^dynamodb\..+\.amazonaws\.com$/;
+const dynamodbHostNameRegex = /^dynamodb\.(.+)\.amazonaws\.com$/;
 
 const defaultKeyDerivationProps = ['method', 'url', 'body'];
 /**
@@ -91,10 +91,11 @@ async function defaultSnapshotFileNameGenerator(request) {
   let filePrefix;
 
   const url = new URL(request.url);
-  if (dynamodbHostNameRegex.test(url.hostname)) {
+  const matches = url.hostname.match(dynamodbHostNameRegex)
+  if (matches) {
     filePrefix = [
       'dynamodb',
-      // slugify(url.hostname), // FIXME: uncomment this next release
+      matches[1], // e.g. eu-west-1
       slugify(request.headers?.get?.('x-amz-target')?.split?.('.')?.pop?.() || ''),
       slugify(JSON.parse(await request.clone().text())?.TableName),
     ].filter(Boolean).join('-');
