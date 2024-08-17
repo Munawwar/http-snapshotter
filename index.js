@@ -81,18 +81,30 @@ let snapshotDirectory = null;
  * @typedef {SnapshotText | SnapshotJson} Snapshot
  */
 
+const dynamodbHostNameRegex = /^dynamodb\..+\.amazonaws\.com$/;
 
 const defaultKeyDerivationProps = ['method', 'url', 'body'];
 /**
  * @param {Request} request 
  */
 async function defaultSnapshotFileNameGenerator(request) {
+  let filePrefix;
+
   const url = new URL(request.url);
-  const filePrefix = [
-    request.method.toLowerCase(),
-    slugify(url.hostname),
-    slugify(url.pathname.replace('.json', '')),
-  ].filter(Boolean).join('-');
+  if (dynamodbHostNameRegex.test(url.hostname)) {
+    filePrefix = [
+      'dynamodb',
+      // slugify(url.hostname), // FIXME: uncomment this next release
+      slugify(request.headers?.get?.('x-amz-target')?.split?.('.')?.pop?.() || ''),
+      slugify(JSON.parse(await request.clone().text())?.TableName),
+    ].filter(Boolean).join('-');
+  } else {
+    filePrefix = [
+      request.method.toLowerCase(),
+      slugify(url.hostname),
+      slugify(url.pathname.replace('.json', '')),
+    ].filter(Boolean).join('-');
+  }
 
   // Input data
   const dataList = await Promise.all(
@@ -348,7 +360,7 @@ let unusedFiles;
 process.on('beforeExit', async () => {
   if (SNAPSHOT === 'read' && !beforeExitEventSeen) {
     beforeExitEventSeen = true;
-    let dir = /** @type {string} */(snapshotDirectory);
+    const dir = /** @type {string} */(snapshotDirectory);
     /** @type {import('node:fs').Dirent[]} */
     let files;
     try {
