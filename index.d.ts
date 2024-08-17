@@ -41,6 +41,15 @@ export type ReadSnapshotReturnType = Promise<{
 export type ClientRequestInterceptorType = import('@mswjs/interceptors/ClientRequest').ClientRequestInterceptor;
 export type FetchInterceptorType = import('@mswjs/interceptors/fetch').FetchInterceptor;
 /**
+ * Write/read snapshots to/from a sub directory. This isolates snapshots for a test.
+ * @param {string} directoryName Directory name relative to snapshot directory. It will be created if it doesn't exist.
+ */
+export function startTestCase(directoryName: string): void;
+/**
+ * Reset the directory to the root directory
+ */
+export function endTestCase(): void;
+/**
  * @param {Request} request
  */
 export function defaultSnapshotFileNameGenerator(request: Request): Promise<{
