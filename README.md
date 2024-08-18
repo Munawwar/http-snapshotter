@@ -25,10 +25,13 @@ import { resolve, dirname } from "node:path";
 import { start, startTestCase, endTestCase } from "http-snapshotter";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// if you are using an isolated test runner, then use a different directory per test (e.g. http-snapshots/test-case-1)
 start({ snapshotDirectory: resolve(__dirname, "http-snapshots") });
 
 test("Latest XKCD comic (ESM)", async (t) => {
+  // if you are *not* using an isolated test runner (e.g. tape), then this adds snapshots to separate directory
   startTestCase('test-case-1');
+
   const res = await fetch("https://xkcd.com/info.0.json");
   const json = await res.json();
 
