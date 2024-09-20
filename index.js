@@ -96,7 +96,7 @@ async function defaultSnapshotFileNameGenerator(request) {
     filePrefix = [
       'dynamodb',
       matches[1], // e.g. eu-west-1
-      slugify(request.headers?.get?.('x-amz-target')?.split?.('.')?.pop?.() || ''),
+      slugify(request.headers?.get?.('x-amz-target')?.split?.('.')?.pop?.() || ''), // e.g. get-item, put-item
       slugify(JSON.parse(await request.clone().text())?.TableName),
     ].filter(Boolean).join('-');
   } else {
@@ -134,7 +134,7 @@ let snapshotSubDirectory = '';
 /**
  * @param {Request} request
  */
-async function getSnapshotFileName(request) {
+async function getSnapshotFileInfo(request) {
   const { fileSuffixKey, filePrefix } = await snapshotFileNameGenerator(request.clone());
 
   // 15 characters are enough for uniqueness
@@ -153,6 +153,8 @@ async function getSnapshotFileName(request) {
   };
 }
 
+/** @typedef {Awaited<ReturnType<getSnapshotFileInfo>>} SnapshotFileInfo */
+
 // NOTE: This isn't going to work on a test runner that uses multiple processes / workers
 /**
  * @typedef {Promise<{
@@ -167,20 +169,12 @@ const readFiles = new Set();
 const existingSubDirectories = new Set();
 
 /**
- * @param {object} param
- * @param {Request} param.request
- * @param {Response} param.response
- * @param {string} param.absoluteFilePath
- * @param {string} param.fileName
- * @param {string} param.fileSuffixKey
+ * @param {Request} request
+ * @param {Response} response
+ * @param {SnapshotFileInfo} snapshotFileInfo
  */
-async function saveSnapshot({
-  request,
-  response,
-  absoluteFilePath,
-  fileName,
-  fileSuffixKey,
-}) {
+async function saveSnapshot(request, response, snapshotFileInfo) {
+  const { absoluteFilePath, fileName, fileSuffixKey } = snapshotFileInfo;
   // Prevent multiple tests from having same snapshot
   if (alreadyWrittenFiles.has(absoluteFilePath)) {
     return /** @type {ReadSnapshotReturnType} */ (alreadyWrittenFiles.get(absoluteFilePath));
@@ -264,9 +258,10 @@ const snapshotCache = {};
 
 /**
  * @param {Request} request
+ * @param {SnapshotFileInfo} snapshotFileInfo
  */
-async function readSnapshot(request) {
-  const { absoluteFilePath, fileName, fileSuffixKey } = await getSnapshotFileName(request);
+async function readSnapshot(request, snapshotFileInfo) {
+  const { absoluteFilePath, fileName, fileSuffixKey } = snapshotFileInfo;
 
   if (!snapshotCache[absoluteFilePath]) {
     if (LOG_SNAPSHOT) {
@@ -340,9 +335,10 @@ async function sendResponse(request, snapshot) {
 
 /**
  * @param {Request} request
+ * @param {SnapshotFileInfo} snapshotFileInfo
  */
-async function readSnapshotAndSendResponse(request) {
-  const { snapshot } = await readSnapshot(request);
+async function readSnapshotAndSendResponse(request, snapshotFileInfo) {
+  const { snapshot } = await readSnapshot(request, snapshotFileInfo);
   if (snapshot) {
     return sendResponse(request, snapshot);
   }
@@ -464,10 +460,14 @@ function start({
     ],
   });
 
+  const cache = /** @type {WeakMap<Request, SnapshotFileInfo>} */ (new WeakMap());
+
   // @ts-ignore
   interceptor.on('request', async ({ request }) => {
     if (['read', 'append'].includes(SNAPSHOT)) {
-      await readSnapshotAndSendResponse(request);
+      const snapshotFileInfo = await getSnapshotFileInfo(request);
+      cache.set(request, snapshotFileInfo);
+      await readSnapshotAndSendResponse(request, snapshotFileInfo);
     }
   });
   interceptor.on(
@@ -475,7 +475,9 @@ function start({
     'response',
     /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
     async ({ request, response }) => {
-      const { absoluteFilePath, fileName, fileSuffixKey } = await getSnapshotFileName(request);
+      const snapshotFileInfo = cache.get(request) || (await getSnapshotFileInfo(request));
+      cache.delete(request);
+      const { absoluteFilePath, fileName, fileSuffixKey } = snapshotFileInfo;
       if (LOG_REQ) {
         const summary = `----------\n${request.method} ${request.url}\nWould use file name: ${fileName}`;
         if (LOG_REQ === '1' || LOG_REQ === 'summary') {
@@ -503,9 +505,7 @@ function start({
           dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
         }
         await dirCreatePromise;
-        await saveSnapshot({
-          request, response, absoluteFilePath, fileName, fileSuffixKey,
-        });
+        await saveSnapshot(request, response, snapshotFileInfo);
       }
     },
   );
