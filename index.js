@@ -43,6 +43,31 @@ const unusedSnapshotsLogFile = 'unused-snapshots.log';
  * @type {import("node:fs").PathLike | null}
  */
 let snapshotDirectory = null;
+let snapshotSubDirectory = '';
+let requestsPendingProcessing = 0;
+const alreadyResponded = new WeakSet();
+
+// TODO: Remove this after removing support for node 20 and use Promise.withResolvers
+/** @returns {{ promise: Promise<undefined>, resolve: () => undefined, reject: () => undefined}} */
+function PromiseWithResolvers() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return {
+    promise,
+    // @ts-ignore
+    resolve,
+    // @ts-ignore
+    reject,
+  };
+}
+
+const dummyPromiseResolvers = PromiseWithResolvers();
+let requestsProcessingCompleted = dummyPromiseResolvers;
 
 /**
  * @typedef SnapshotText
@@ -129,7 +154,6 @@ async function defaultSnapshotFileNameGenerator(request) {
  * @type {(req: Request) => Promise<{ filePrefix: string, fileSuffixKey: string }>}
  */
 let snapshotFileNameGenerator = defaultSnapshotFileNameGenerator;
-let snapshotSubDirectory = '';
 
 /**
  * @param {Request} request
@@ -330,6 +354,15 @@ async function sendResponse(request, snapshot) {
   // respondWith is a method added by @mswjs/interceptors
   // @ts-ignore
   request.respondWith(newResponse);
+  // We cannot consistently rely on 'response' event being fired after a respondWith()
+  // So use a set to noted these requests and then ignore them if 'response' is fired.
+  alreadyResponded.add(request);
+  if (requestsPendingProcessing > 0) {
+    requestsPendingProcessing--;
+  }
+  if (requestsPendingProcessing === 0) {
+    requestsProcessingCompleted.resolve();
+  }
   return newResponse;
 }
 
@@ -342,6 +375,10 @@ async function readSnapshotAndSendResponse(request, snapshotFileInfo) {
   if (snapshot) {
     return sendResponse(request, snapshot);
   }
+  // readSnapshot() throws an error if we are in 'read' mode.
+  // Meaning the only way to reach this part of the code is when snapshot is in 'append' mode AND
+  // if the snapshot wasn't present and is supposed to get created.
+  // Also it means we are not done with request processing. So we cannot decrement `requestsPendingProcessing` here.
   return undefined;
 }
 
@@ -402,7 +439,11 @@ function startTestCase(directoryName) {
 /**
  * Reset the directory to the root directory
  */
-function endTestCase() {
+async function endTestCase() {
+  if (requestsPendingProcessing > 0) {
+    await requestsProcessingCompleted.promise;
+    requestsProcessingCompleted = dummyPromiseResolvers;
+  }
   snapshotSubDirectory = '';
 }
 
@@ -464,10 +505,26 @@ function start({
 
   // @ts-ignore
   interceptor.on('request', async ({ request }) => {
-    if (['read', 'append'].includes(SNAPSHOT)) {
-      const snapshotFileInfo = await getSnapshotFileInfo(request);
-      cache.set(request, snapshotFileInfo);
-      await readSnapshotAndSendResponse(request, snapshotFileInfo);
+    if (requestsProcessingCompleted === dummyPromiseResolvers) {
+      requestsProcessingCompleted = PromiseWithResolvers();
+    }
+    requestsPendingProcessing++;
+
+    try {
+      if (['read', 'append'].includes(SNAPSHOT)) {
+        const snapshotFileInfo = await getSnapshotFileInfo(request);
+        cache.set(request, snapshotFileInfo);
+        await readSnapshotAndSendResponse(request, snapshotFileInfo);
+      }
+    } catch (err) {
+      if (requestsPendingProcessing > 0) {
+        requestsPendingProcessing--;
+      }
+      if (requestsPendingProcessing === 0) {
+        requestsProcessingCompleted.resolve();
+      }
+      console.error(err);
+      throw err;
     }
   });
   interceptor.on(
@@ -475,37 +532,54 @@ function start({
     'response',
     /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
     async ({ request, response }) => {
-      const snapshotFileInfo = cache.get(request) || (await getSnapshotFileInfo(request));
-      cache.delete(request);
-      const { absoluteFilePath, fileName, fileSuffixKey } = snapshotFileInfo;
-      if (LOG_REQ) {
-        const summary = `----------\n${request.method} ${request.url}\nWould use file name: ${fileName}`;
-        if (LOG_REQ === '1' || LOG_REQ === 'summary') {
-          console.debug(summary);
-        } else if (LOG_REQ === 'detailed') {
-          console.debug(`${summary}\n----------\n`, {
-            request: {
-              url: request.url,
-              method: request.method,
-              headers: Object.fromEntries([...request.headers.entries()]),
-              body: await request.clone().text(),
-            },
-            response: {
-              status: response.status,
-              statusText: response.statusText,
-              headers: Object.fromEntries([...response.headers.entries()]),
-              body: await response.clone().text(),
-            },
-            wouldUseFileSuffixKey: fileSuffixKey,
-          });
+      try {
+        const snapshotFileInfo = cache.get(request) || (await getSnapshotFileInfo(request));
+        cache.delete(request);
+        const {
+          // absoluteFilePath,
+          fileName, 
+          fileSuffixKey
+        } = snapshotFileInfo;
+        if (LOG_REQ) {
+          const summary = `----------\n${request.method} ${request.url}\nWould use file name: ${fileName}`;
+          if (LOG_REQ === '1' || LOG_REQ === 'summary') {
+            console.debug(summary);
+          } else if (LOG_REQ === 'detailed') {
+            console.debug(`${summary}\n----------\n`, {
+              request: {
+                url: request.url,
+                method: request.method,
+                headers: Object.fromEntries([...request.headers.entries()]),
+                body: await request.clone().text(),
+              },
+              response: {
+                status: response.status,
+                statusText: response.statusText,
+                headers: Object.fromEntries([...response.headers.entries()]),
+                body: await response.clone().text(),
+              },
+              wouldUseFileSuffixKey: fileSuffixKey,
+            });
+          }
         }
-      }
-      if (SNAPSHOT === 'update' || (SNAPSHOT === 'append' && !readFiles.has(fileName))) {
-        if (!dirCreatePromise) {
-          dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
+        if (SNAPSHOT === 'update' || (SNAPSHOT === 'append' && !readFiles.has(fileName))) {
+          if (!dirCreatePromise) {
+            dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
+          }
+          await dirCreatePromise;
+          await saveSnapshot(request, response, snapshotFileInfo);
         }
-        await dirCreatePromise;
-        await saveSnapshot(request, response, snapshotFileInfo);
+      } finally {
+        if (alreadyResponded.has(request)) {
+          alreadyResponded.delete(request);
+        } else {
+          if (requestsPendingProcessing > 0) {
+            requestsPendingProcessing--;
+          }
+          if (requestsPendingProcessing === 0) {
+            requestsProcessingCompleted.resolve();
+          }
+        }
       }
     },
   );

@@ -33,6 +33,7 @@ export type SnapshotJson = {
     };
 };
 export type Snapshot = SnapshotText | SnapshotJson;
+export type SnapshotFileInfo = Awaited<ReturnType<typeof getSnapshotFileInfo>>;
 export type ReadSnapshotReturnType = Promise<{
     snapshot: Snapshot;
     absoluteFilePath: string;
@@ -48,7 +49,7 @@ export function startTestCase(directoryName: string): void;
 /**
  * Reset the directory to the root directory
  */
-export function endTestCase(): void;
+export function endTestCase(): Promise<void>;
 /**
  * @param {Request} request
  */
@@ -92,3 +93,13 @@ export function start({ snapshotDirectory: _snapshotDirectory, }?: {
 }): void;
 /** Stop the interceptor */
 export function stop(): void;
+/**
+ * @param {Request} request
+ */
+declare function getSnapshotFileInfo(request: Request): Promise<{
+    absoluteFilePath: string;
+    fileName: string;
+    filePrefix: string;
+    fileSuffixKey: string;
+}>;
+export {};
