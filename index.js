@@ -27,13 +27,19 @@
  * More docs at the end of this file, find the exported methods.
  */
 // Tested with @mswjs/interceptors v0.24.1
-const { BatchInterceptor } = require('@mswjs/interceptors');
+const { BatchInterceptor, RequestController } = require('@mswjs/interceptors');
 const { ClientRequestInterceptor } = require('@mswjs/interceptors/ClientRequest');
 const { FetchInterceptor } = require('@mswjs/interceptors/fetch');
 const slugify = require('@sindresorhus/slugify');
 const { createHash } = require('node:crypto');
 const { promises: fs } = require('node:fs');
 const { resolve, dirname, relative } = require('node:path');
+const zlib = require('node:zlib');
+const { promisify } = require('node:util');
+
+const gzip = promisify(zlib.gzip);
+const brotliCompress = promisify(zlib.brotliCompress);
+const deflate = promisify(zlib.deflate);
 
 // Environment variable SNAPSHOT = update / append / ignore / read (default)
 const SNAPSHOT = process.env.SNAPSHOT || 'read';
@@ -302,10 +308,10 @@ async function readSnapshot(request, snapshotFileInfo) {
 }
 
 /**
- * @param {Request} request
+ * @param {RequestController} controller
  * @param {Snapshot} snapshot
  */
-async function sendResponse(request, snapshot) {
+async function sendResponse(controller, snapshot) {
   const {
     responseType,
     response: {
@@ -316,10 +322,31 @@ async function sendResponse(request, snapshot) {
     },
   } = snapshot;
 
+  /** @type {string|Buffer} */
+  let encodedBody = responseType === 'json'
+    ? JSON.stringify(body)
+    : /** @type {string} */ (body);
+  const contentEncoding = headers.find(tuple => tuple[0]?.toLowerCase() === 'content-encoding');
+
+  if (contentEncoding) {
+    if (contentEncoding[1].includes('br')) {
+      encodedBody = await brotliCompress(encodedBody);
+    } else if (contentEncoding[1].includes('gzip')) {
+      encodedBody = await gzip(encodedBody);
+    } else if (contentEncoding[1].includes('deflate')) {
+      encodedBody = await deflate(encodedBody);
+    } else if (contentEncoding[1].includes('compress')) {
+      // Most servers don't send compress responses and node.js
+      // doesn't have built-in compress support even for fetch().
+      throw new Error('compress encoding not supported');
+    } else if (contentEncoding[1].includes('zstd')) {
+      // Node.js doesn't have built-in zstd support at the moment
+      throw new Error('zstd encoding not supported');
+    }
+  }
+
   const newResponse = new Response(
-    responseType === 'json'
-      ? JSON.stringify(body)
-      : /** @type {string} */ (body),
+    encodedBody,
     {
       status,
       statusText,
@@ -327,20 +354,20 @@ async function sendResponse(request, snapshot) {
     },
   );
 
-  // respondWith is a method added by @mswjs/interceptors
   // @ts-ignore
-  request.respondWith(newResponse);
+  controller.respondWith(newResponse);
   return newResponse;
 }
 
 /**
  * @param {Request} request
+ * @param {RequestController} controller
  * @param {SnapshotFileInfo} snapshotFileInfo
  */
-async function readSnapshotAndSendResponse(request, snapshotFileInfo) {
+async function readSnapshotAndSendResponse(request, controller, snapshotFileInfo) {
   const { snapshot } = await readSnapshot(request, snapshotFileInfo);
   if (snapshot) {
-    return sendResponse(request, snapshot);
+    return sendResponse(controller, snapshot);
   }
   return undefined;
 }
@@ -463,11 +490,11 @@ function start({
   const cache = /** @type {WeakMap<Request, SnapshotFileInfo>} */ (new WeakMap());
 
   // @ts-ignore
-  interceptor.on('request', async ({ request }) => {
+  interceptor.on('request', async ({ request, controller }) => {
     if (['read', 'append'].includes(SNAPSHOT)) {
       const snapshotFileInfo = await getSnapshotFileInfo(request);
       cache.set(request, snapshotFileInfo);
-      await readSnapshotAndSendResponse(request, snapshotFileInfo);
+      await readSnapshotAndSendResponse(request, controller, snapshotFileInfo);
     }
   });
   interceptor.on(
@@ -477,7 +504,11 @@ function start({
     async ({ request, response }) => {
       const snapshotFileInfo = cache.get(request) || (await getSnapshotFileInfo(request));
       cache.delete(request);
-      const { absoluteFilePath, fileName, fileSuffixKey } = snapshotFileInfo;
+      const {
+        // absoluteFilePath,
+        fileName,
+        fileSuffixKey,
+      } = snapshotFileInfo;
       if (LOG_REQ) {
         const summary = `----------\n${request.method} ${request.url}\nWould use file name: ${fileName}`;
         if (LOG_REQ === '1' || LOG_REQ === 'summary') {

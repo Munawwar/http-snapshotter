@@ -24,7 +24,7 @@
     "url": "https://github.com/Munawwar/http-snapshotter/issues"
   },
   "dependencies": {
-    "@mswjs/interceptors": "^0.24.1",
+    "@mswjs/interceptors": "^0.37.5",
     "@sindresorhus/slugify": "^1.1.2"
   },
   "devDependencies": {
