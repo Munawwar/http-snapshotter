@@ -322,19 +322,21 @@ async function sendResponse(controller, snapshot) {
     },
   } = snapshot;
 
-  /** @type {string|Buffer} */
+  /** @type {string} */
   let encodedBody = responseType === 'json'
     ? JSON.stringify(body)
-    : /** @type {string} */ (body);
+    : /** @type {string} */ (body || '');
+  /** @type {Buffer} */
+  let bufferBody;
   const contentEncoding = headers.find(tuple => tuple[0]?.toLowerCase() === 'content-encoding');
 
   if (contentEncoding) {
     if (contentEncoding[1].includes('br')) {
-      encodedBody = await brotliCompress(encodedBody);
+      bufferBody = await brotliCompress(encodedBody);
     } else if (contentEncoding[1].includes('gzip')) {
-      encodedBody = await gzip(encodedBody);
+      bufferBody = await gzip(encodedBody);
     } else if (contentEncoding[1].includes('deflate')) {
-      encodedBody = await deflate(encodedBody);
+      bufferBody = await deflate(encodedBody);
     } else if (contentEncoding[1].includes('compress')) {
       // Most servers don't send compress responses and node.js
       // doesn't have built-in compress support even for fetch().
@@ -342,18 +344,28 @@ async function sendResponse(controller, snapshot) {
     } else if (contentEncoding[1].includes('zstd')) {
       // Node.js doesn't have built-in zstd support at the moment
       throw new Error('zstd encoding not supported');
+    } else {
+      // Unknown content-encoding fallback
+      bufferBody = Buffer.from(encodedBody);
     }
+  } else {
+    bufferBody = Buffer.from(encodedBody)
   }
 
   const newResponse = new Response(
-    encodedBody,
+    bufferBody,
     {
       status,
       statusText,
-      headers: new Headers(/** @type HeadersInit */ (headers)),
+      headers: new Headers(/** @type HeadersInit */ (headers.map((tuple) => {
+        // We reformatted the json and removed spaces, so it's content-length may not be same as original
+        if (tuple[0] === 'content-length' && responseType === 'json') {
+          return [tuple[0], bufferBody.byteLength];
+        }
+        return tuple;
+      }))),
     },
   );
-
   // @ts-ignore
   controller.respondWith(newResponse);
   return newResponse;
