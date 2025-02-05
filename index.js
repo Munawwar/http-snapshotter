@@ -87,7 +87,7 @@ let snapshotDirectory = null;
  * @typedef {SnapshotText | SnapshotJson} Snapshot
  */
 
-const dynamodbHostNameRegex = /^dynamodb\.(.+)\.amazonaws\.com$/;
+const dynamodbHostNameRegex = /^(?:dynamodb|\d+\.ddb)\.([^.]+)\.amazonaws\.com$/;
 
 const defaultKeyDerivationProps = ['method', 'url', 'body'];
 /**
