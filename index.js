@@ -33,9 +33,10 @@ const { FetchInterceptor } = require('@mswjs/interceptors/fetch');
 const slugify = require('@sindresorhus/slugify');
 const { createHash } = require('node:crypto');
 const { promises: fs } = require('node:fs');
-const { resolve, dirname, relative } = require('node:path');
+const { resolve, dirname, relative, basename, join } = require('node:path');
 const zlib = require('node:zlib');
 const { promisify } = require('node:util');
+const { diffChars } = require('diff');
 
 const gzip = promisify(zlib.gzip);
 const brotliCompress = promisify(zlib.brotliCompress);
@@ -46,7 +47,7 @@ const SNAPSHOT = process.env.SNAPSHOT || 'read';
 const { LOG_REQ, LOG_SNAPSHOT } = process.env;
 const unusedSnapshotsLogFile = 'unused-snapshots.log';
 /**
- * @type {import("node:fs").PathLike | null}
+ * @type {string | null}
  */
 let snapshotDirectory = null;
 
@@ -85,6 +86,10 @@ let snapshotDirectory = null;
 
 /**
  * @typedef {SnapshotText | SnapshotJson} Snapshot
+ */
+
+/**
+ * @typedef {import('diff').Change} DiffChange
  */
 
 const dynamodbHostNameRegex = /^(?:dynamodb|\d+\.ddb)\.([^.]+)\.amazonaws\.com$/;
@@ -138,7 +143,16 @@ let snapshotFileNameGenerator = defaultSnapshotFileNameGenerator;
 let snapshotSubDirectory = '';
 
 /**
+ * @typedef SnapshotFileInfo
+ * @property {string} absoluteFilePath
+ * @property {string} fileName in format filePrefix-hash.json`
+ * @property {string} filePrefix
+ * @property {string} fileSuffixKey The string that would be hashed to be suffixed to the snapshot file name
+ */
+
+/**
  * @param {Request} request
+ * @returns {Promise<SnapshotFileInfo>}
  */
 async function getSnapshotFileInfo(request) {
   const { fileSuffixKey, filePrefix } = await snapshotFileNameGenerator(request.clone());
@@ -149,7 +163,7 @@ async function getSnapshotFileInfo(request) {
     .digest('base64url')
     .slice(0, 15);
 
-  const fileName = `${snapshotSubDirectory ? `${snapshotSubDirectory}/` : ''}${filePrefix}-${hash}.json`;
+  const fileName = join(snapshotSubDirectory, `${filePrefix}-${hash}.json`);
 
   return {
     absoluteFilePath: resolve(/** @type {string} */ (snapshotDirectory), fileName),
@@ -158,8 +172,6 @@ async function getSnapshotFileInfo(request) {
     fileSuffixKey,
   };
 }
-
-/** @typedef {Awaited<ReturnType<getSnapshotFileInfo>>} SnapshotFileInfo */
 
 // NOTE: This isn't going to work on a test runner that uses multiple processes / workers
 /**
@@ -268,6 +280,9 @@ const snapshotCache = {};
  */
 async function readSnapshot(request, snapshotFileInfo) {
   const { absoluteFilePath, fileName, fileSuffixKey } = snapshotFileInfo;
+  const currentSnapshotDirectory = snapshotDirectory !== null && snapshotSubDirectory
+    ? resolve(snapshotDirectory, snapshotSubDirectory)
+    : snapshotDirectory;
 
   if (!snapshotCache[absoluteFilePath]) {
     if (LOG_SNAPSHOT) {
@@ -281,17 +296,33 @@ async function readSnapshot(request, snapshotFileInfo) {
       // @ts-ignore
       if (err.code === 'ENOENT') {
         if (SNAPSHOT === 'append') return {};
+        const match = await findClosestSnapshotFile(currentSnapshotDirectory, snapshotFileInfo);
         const reqBody = await request.clone().text();
-        console.error('No network snapshot found for request with cache keys:', {
-          request: {
-            url: request.url,
-            method: request.method,
-            headers: Object.fromEntries([...request.headers.entries()]),
-            body: reqBody,
-          },
-          fileName,
-          fileSuffixKey,
-        });
+        const debuggingHelperMessage = (match ? [
+          ...(match.fileSuffixKey === fileSuffixKey ? [
+            `\nFound a snapshot file with same file suffix key: ${join(snapshotSubDirectory, match.file)}. Was the snapshot file manually renamed?`,
+            `Below is the diff between the current snapshot's file name versus what should be the new snapshot file name:`,
+            showColoredDiff(diffChars(fileName, join(snapshotSubDirectory, match.file)))
+          ] : [
+            `\nMaybe request has a had a minor change from previous snapshot? Closest snapshot file in similarity: ${join(snapshotSubDirectory, match.file)}`,
+            `Below is the diff between the two's fileSuffixKey that is used for computing the hash of the file name:`,
+            showColoredDiff(match.differences),
+          ]),
+        ] : []).join('\n');
+        console.error(
+          'No network snapshot found for request with cache keys:', 
+          {
+            request: {
+              url: request.url,
+              method: request.method,
+              headers: Object.fromEntries([...request.headers.entries()]),
+              body: reqBody,
+            },
+            fileName,
+            fileSuffixKey,
+          }, 
+          debuggingHelperMessage
+        );
         throw new Error('Network request not mocked');
       } else {
         // @ts-ignore
@@ -305,6 +336,102 @@ async function readSnapshot(request, snapshotFileInfo) {
 
   const snapshot = snapshotCache[absoluteFilePath];
   return { snapshot, absoluteFilePath, fileName };
+}
+
+/** @type {{ [snapshotFile: string]: Snapshot }} */
+const existingSnapshotFilesSuffixKeys = {};
+/**
+ * @param {string|null} snapshotDirectory
+ * @param {SnapshotFileInfo} snapshotFileInfo
+ * @returns {Promise<{ file: string, fileSuffixKey: string, differences: DiffChange[] } | null>}
+ */
+async function findClosestSnapshotFile(snapshotDirectory, { filePrefix, fileSuffixKey }) {
+  if (SNAPSHOT !== 'read' || snapshotDirectory === null) return null;
+  const filesWithSamePrefix = (await readExistingSnapshotFilesList(snapshotDirectory))
+    .filter(file => basename(file).startsWith(`${filePrefix}-`));
+  const fileContents = (
+    await Promise.all(filesWithSamePrefix.map(async (file) => {
+      const absolutePath = resolve(snapshotDirectory, file);
+      if (!existingSnapshotFilesSuffixKeys[absolutePath]) {
+        existingSnapshotFilesSuffixKeys[absolutePath] = /** @type {Snapshot} */ (
+          JSON.parse(await fs.readFile(absolutePath, 'utf-8'))
+        )
+      }
+      return existingSnapshotFilesSuffixKeys[absolutePath];
+    }))
+  ).map((snapshot, index) => ({
+    file: filesWithSamePrefix[index],
+    fileSuffixKey: snapshot.fileSuffixKey,
+  }));
+
+  /** @type {{ file: string, fileSuffixKey: string, differences: DiffChange[] } | null} */
+  let closestMatch = null;
+  let smallestDiff = Infinity;
+  
+  fileContents.forEach((item) => {
+    const differences = diffChars(item.fileSuffixKey, fileSuffixKey);
+    const totalChars = differences.reduce((sum, part) => sum + part.value.length, 0);
+    const diffRatio = differences
+      .filter(d => d.added || d.removed)
+      .reduce((sum, part) => sum + part.value.length, 0) / totalChars;
+
+    if (diffRatio < 0.5 && diffRatio < smallestDiff) {
+      smallestDiff = diffRatio;
+      closestMatch = {
+        ...item,
+        differences
+      };
+    }
+  });
+
+  return closestMatch;
+}
+
+/** @type {{ [dir: string]: string[] }} */
+const existingSnapshotFilesList = {};
+/**
+ * @param {string|null} snapshotDirectory
+ */
+async function readExistingSnapshotFilesList(snapshotDirectory) {
+  if (snapshotDirectory === null) return [];
+  const dir = /** @type {string} */(snapshotDirectory);
+  if (!existingSnapshotFilesList[dir]) {
+    /** @type {import('node:fs').Dirent[]} */
+    let files;
+    try {
+      files = await fs.readdir(dir, { recursive: true, withFileTypes: true });
+    } catch (err) {
+      return [];
+    }
+    existingSnapshotFilesList[dir] = files
+        .filter((file) => file.isFile())
+        .map((file) => relative(dir, resolve(file.path, file.name)))
+  }
+  return existingSnapshotFilesList[dir];
+}
+
+// ANSI color codes
+const colors = {
+  redBg: '\x1b[41m',    // red background
+  greenBg: '\x1b[42m',  // green background
+  white: '\x1b[37m',    // white text
+  reset: '\x1b[0m'
+};
+/**
+ * @param {DiffChange[]} differences 
+ */
+function showColoredDiff(differences) {
+  let output = '';
+  differences.forEach(part => {
+    if (part.added) {
+      output += colors.greenBg + colors.white + part.value + colors.reset;
+    } else if (part.removed) {
+      output += colors.redBg + colors.white + part.value + colors.reset;
+    } else {
+      output += part.value;
+    }
+  });
+  return output;
 }
 
 /**
@@ -392,21 +519,11 @@ async function readSnapshotAndSendResponse(request, controller, snapshotFileInfo
 let interceptor = null;
 
 let beforeExitEventSeen = false;
-let unusedFiles;
 process.on('beforeExit', async () => {
-  if (SNAPSHOT === 'read' && !beforeExitEventSeen) {
+  if (SNAPSHOT === 'read' && !beforeExitEventSeen && snapshotDirectory !== null) {
     beforeExitEventSeen = true;
     const dir = /** @type {string} */(snapshotDirectory);
-    /** @type {import('node:fs').Dirent[]} */
-    let files;
-    try {
-      files = await fs.readdir(dir, { recursive: true, withFileTypes: true });
-    } catch (err) {
-      return;
-    }
-    unusedFiles = files
-      .filter((file) => file.isFile())
-      .map((file) => relative(dir, resolve(file.path, file.name)))
+    const unusedFiles = (await readExistingSnapshotFilesList(dir))
       .filter((file) => (!readFiles.has(file) && file !== unusedSnapshotsLogFile)); 
     if (unusedFiles.length) {
       await fs
