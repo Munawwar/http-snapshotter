@@ -124,7 +124,7 @@ async function defaultSnapshotFileNameGenerator(request) {
       if (key === 'body') {
         return request.clone().text();
       }
-      // @ts-ignore
+      //@ts-ignore
       return request[key];
     }),
   );
@@ -271,6 +271,16 @@ async function saveSnapshot(request, response, snapshotFileInfo) {
   return savePromise;
 }
 
+// ANSI color codes
+const colors = {
+  redBg: '\x1b[41m',
+  greenBg: '\x1b[42m',
+  white: '\x1b[37m',
+  red: '\x1b[31m',
+  yellow: '\x1b[33m',
+  reset: '\x1b[0m'
+};
+
 /** @type {Record<string, Snapshot>} */
 const snapshotCache = {};
 
@@ -293,39 +303,39 @@ async function readSnapshot(request, snapshotFileInfo) {
       json = await fs.readFile(absoluteFilePath, 'utf-8');
     } catch (err) {
       // Fail any test that fires a real network request (without snapshot)
-      // @ts-ignore
+      //@ts-ignore
       if (err.code === 'ENOENT') {
         if (SNAPSHOT === 'append') return {};
         const match = await findClosestSnapshotFile(currentSnapshotDirectory, snapshotFileInfo);
         const reqBody = await request.clone().text();
         const debuggingHelperMessage = (match ? [
           ...(match.fileSuffixKey === fileSuffixKey ? [
-            `\nFound a snapshot file with same file suffix key: ${join(snapshotSubDirectory, match.file)}. Was the snapshot file manually renamed?`,
-            `Below is the diff between the current snapshot's file name versus what should be the new snapshot file name:`,
+            `\n${colors.yellow}Found a snapshot file with same file suffix key:${colors.reset} ${join(snapshotSubDirectory, match.file)}. ${colors.yellow}Was the snapshot file manually renamed?${colors.reset}`,
+            `${colors.yellow}Below is the diff between the current snapshot's file name versus what should be the new snapshot file name:${colors.reset}`,
             showColoredDiff(diffChars(fileName, join(snapshotSubDirectory, match.file)))
           ] : [
-            `\nMaybe request has a had a minor change from previous snapshot? Closest snapshot file in similarity: ${join(snapshotSubDirectory, match.file)}`,
-            `Below is the diff between the two's fileSuffixKey that is used for computing the hash of the file name:`,
+            `\n${colors.yellow}Maybe request has a had a minor change from previous snapshot? Closest snapshot file in similarity:${colors.reset} ${join(snapshotSubDirectory, match.file)}`,
+            `${colors.yellow}Below is the diff between the two's fileSuffixKey that is used for computing the hash of the file name:${colors.reset}`,
             showColoredDiff(match.differences),
           ]),
         ] : []).join('\n');
         console.error(
-          'No network snapshot found for request with cache keys:', 
+          `${colors.red}No network snapshot found for following request:${colors.reset}`, 
           {
+            expectedSnapshotFileName: fileName,
             request: {
               url: request.url,
               method: request.method,
               headers: Object.fromEntries([...request.headers.entries()]),
               body: reqBody,
             },
-            fileName,
             fileSuffixKey,
           }, 
           debuggingHelperMessage
         );
         throw new Error('Network request not mocked');
       } else {
-        // @ts-ignore
+        //@ts-ignore
         console.error('Error reading network snapshot file:', err.message);
         throw err;
       }
@@ -410,13 +420,6 @@ async function readExistingSnapshotFilesList(snapshotDirectory) {
   return existingSnapshotFilesList[dir];
 }
 
-// ANSI color codes
-const colors = {
-  redBg: '\x1b[41m',    // red background
-  greenBg: '\x1b[42m',  // green background
-  white: '\x1b[37m',    // white text
-  reset: '\x1b[0m'
-};
 /**
  * @param {DiffChange[]} differences 
  */
@@ -493,7 +496,7 @@ async function sendResponse(controller, snapshot) {
       }))),
     },
   );
-  // @ts-ignore
+  //@ts-ignore
   controller.respondWith(newResponse);
   return newResponse;
 }
@@ -618,7 +621,7 @@ function start({
 
   const cache = /** @type {WeakMap<Request, SnapshotFileInfo>} */ (new WeakMap());
 
-  // @ts-ignore
+  //@ts-ignore
   interceptor.on('request', async ({ request, controller }) => {
     if (['read', 'append'].includes(SNAPSHOT)) {
       const snapshotFileInfo = await getSnapshotFileInfo(request);
@@ -627,7 +630,7 @@ function start({
     }
   });
   interceptor.on(
-    // @ts-ignore
+    //@ts-ignore
     'response',
     /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
     async ({ request, response }) => {
