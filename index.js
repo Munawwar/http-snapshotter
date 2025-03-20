@@ -318,6 +318,7 @@ async function readSnapshot(request, snapshotFileInfo) {
             `${colors.yellow}Below is the diff between the two's fileSuffixKey that is used for computing the hash of the file name:${colors.reset}`,
             showColoredDiff(match.differences),
           ]),
+          '',
         ] : []).join('\n');
         console.error(
           `${colors.red}No network snapshot found for following request:${colors.reset}`, 
