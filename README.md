@@ -62,6 +62,12 @@ Once you are done writing your tests, run your test runner on all your tests and
 
 The tests of this library uses this library itself, check the `tests/` directory and try the tests `npm ci; npm test`.
 
+## Limitations
+
+1. MSW interceptor cannot mock `GET` calls with body. So trying to mock elasticsearch / opensearch `GET /<index>/_search` calls with body breaks. I ended up using `POST` only when unit testing, as `GET` is the right way to use with AWS `AmazonOpenSearchServiceReadOnlyAccess` IAM permission 🤷‍♂️.
+
+2. Stripe SDK uses node http module in a way MSW interceptor cannot mock - [reference](https://github.com/mswjs/msw/issues/2259#issuecomment-2379379566). Solution mentioned in a comment there is to use Stripe SDK with `fetch` client - [reference](https://github.com/mswjs/msw/issues/2259#issuecomment-2422672039). Another workaround is to mock Stripe SDK's methods with your testing library of choice.
+
 ## About snapshot files and its names
 
 A snapshot file name uniquely identifies a request. By default it is a combination of HTTP method + URL + body that makes a request unique (headers are ignored).
