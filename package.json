@@ -1,6 +1,6 @@
 {
   "name": "http-snapshotter",
-  "version": "0.5.2",
+  "version": "0.5.3-beta.1",
   "description": "Snapshot HTTP requests for tests (node.js)",
   "main": "index.js",
   "types": "index.d.ts",
@@ -8,6 +8,9 @@
     "import": "./index.mjs",
     "require": "./index.js",
     "types": "./index.d.ts"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "tape tests/**/*.test.* | tap-arc",
