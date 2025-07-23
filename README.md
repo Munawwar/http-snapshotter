@@ -200,3 +200,24 @@ WARNING: This module isn't concurrent or thread safe. Make sure that:
 1. within one worker only one test is being executed at a time. e.g. If you use `ava`, and you have multiple `test()` blocks in one file, you need to change it to run serially with `test.serial()`.
 
 2. parallel tests don't update the same snapshot file at the same time (i.e. while you run with SNAPSHOT=update). Regardless, updating snapshots of multiple tests at the same time is not a great idea in my opinion, because reviewing the snapshots files are a pain, escpecially if you have a shared snapshot files.
+
+## Ignoring requests from snapshots
+
+Sometimes you may want certain requests to not be snapshotted (e.g., file uploads to S3 / object storage) so that you can layer function / result snapshotting on top. Use `attachSnapshotIgnoreRules()` to provide a function that determines which requests should be ignored:
+
+```js
+import { attachSnapshotIgnoreRules, resetSnapshotIgnoreRules } from "http-snapshotter";
+
+// Ignore analytics and health check requests
+attachSnapshotIgnoreRules((request) => {
+  const url = new URL(request.url);
+  return url.hostname.includes('/upload');
+});
+
+// Reset to default (no requests ignored)
+resetSnapshotIgnoreRules();
+```
+
+**Behavior varies by mode:**
+- `SNAPSHOT=update/append`: Ignored requests make real network calls but don't create snapshots
+- `SNAPSHOT=read`: Ignored requests throw an error (tests shouldn't make real network calls)
