@@ -16,6 +16,10 @@
  * You can use SNAPSHOT=ignore to neither read not write snapshots, for testing on real
  * network operations.
  * 
+ * To ignore specific requests from being snapshotted in SNAPSHOT=update or SNAPSHOT=append mode,
+ * use attachSnapshotIgnoreRules() to provide a function that receives the request object and
+ * returns true if the request should be ignored from snapshotting.
+ * 
  * Log read/saved snapshots by setting LOG_SNAPSHOT=1 env variable.
  *
  * Unused snapshot files will be written into a log file named 'unused-snapshots.log'.
@@ -135,12 +139,26 @@ async function defaultSnapshotFileNameGenerator(request) {
   };
 }
 
+/**
+ * Default snapshot ignore rules - by default no requests are ignored
+ * @param {Request} request 
+ * @returns {boolean}
+ */
+function defaultSnapshotIgnoreRules(request) {
+  return false;
+}
+
 // Dynamically changeable props
 /**
  * @type {(req: Request) => Promise<{ filePrefix: string, fileSuffixKey: string }>}
  */
 let snapshotFileNameGenerator = defaultSnapshotFileNameGenerator;
 let snapshotSubDirectory = '';
+
+/**
+ * @type {(req: Request) => boolean}
+ */
+let snapshotIgnoreRules = defaultSnapshotIgnoreRules;
 
 /**
  * @typedef SnapshotFileInfo
@@ -596,6 +614,36 @@ function resetSnapshotFilenameGenerator() {
 }
 
 /**
+ * Attach snapshot ignore rules function
+ * 
+ * Here's your opportunity to define custom rules for ignoring requests from being snapshotted.
+ * The function receives the Request object and should return true if the request should be ignored.
+ *
+ * IMPORTANT: Behavior varies by SNAPSHOT mode:
+ * - SNAPSHOT=update/append: Ignored requests make real network calls but don't create snapshots
+ * - SNAPSHOT=read: Ignored requests throw an error (tests shouldn't make real network calls)
+ *
+ * Use cases (not limited to):
+ * 1. Ignore requests with specific headers (e.g., x-debug-mode: no-snapshot)
+ * 2. Ignore requests to specific URLs or domains
+ * 3. Ignore requests with specific HTTP methods
+ * 4. Ignore requests based on request body content
+ *
+ * WARNING: Attaching a function on a per-test basis may not be concurrent safe. i.e. If your tests
+ * run sequentially, then it is safe. But if your test runner runs test suites concurrently,
+ * then it is better to attach a function only once ever.
+ * @param {(req: Request) => boolean} func
+ */
+function attachSnapshotIgnoreRules(func) {
+  snapshotIgnoreRules = func;
+}
+
+/** Reset snapshot ignore rules to default (no requests ignored) */
+function resetSnapshotIgnoreRules() {
+  snapshotIgnoreRules = defaultSnapshotIgnoreRules;
+}
+
+/**
  * Start the interceptor
  * @param {object} opts
  * @param {string|null} opts.snapshotDirectory Full absolute path to snapshot directory
@@ -621,10 +669,35 @@ function start({
   });
 
   const cache = /** @type {WeakMap<Request, SnapshotFileInfo>} */ (new WeakMap());
+  const ignoredRequests = /** @type {WeakSet<Request>} */ (new WeakSet());
 
   //@ts-ignore
   interceptor.on('request', async ({ request, controller }) => {
-    if (['read', 'append'].includes(SNAPSHOT)) {
+    // Check if request should be ignored from snapshotting using ignore rules
+    const shouldIgnoreSnapshot = snapshotIgnoreRules(request);
+    
+    // Track ignored requests
+    if (shouldIgnoreSnapshot) {
+      ignoredRequests.add(request);
+      
+      // In read mode, we should not allow ignored requests to make real network calls
+      if (SNAPSHOT === 'read') {
+        console.error(
+          `${colors.red}Request ignored by snapshot ignore rules but SNAPSHOT=read mode doesn't allow real network requests:${colors.reset}`,
+          {
+            request: {
+              url: request.url,
+              method: request.method,
+              headers: Object.fromEntries([...request.headers.entries()]),
+              body: await request.clone().text(),
+            }
+          }
+        );
+        throw new Error('Request ignored by snapshot ignore rules but SNAPSHOT=read mode doesn\'t allow real network requests');
+      }
+    }
+    
+    if (['read', 'append'].includes(SNAPSHOT) && !shouldIgnoreSnapshot) {
       const snapshotFileInfo = await getSnapshotFileInfo(request);
       cache.set(request, snapshotFileInfo);
       await readSnapshotAndSendResponse(request, controller, snapshotFileInfo);
@@ -635,15 +708,23 @@ function start({
     'response',
     /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
     async ({ request, response }) => {
+      // Check if this request was marked to ignore snapshots
+      const shouldIgnoreSnapshot = ignoredRequests.has(request);
+      
       const snapshotFileInfo = cache.get(request) || (await getSnapshotFileInfo(request));
       cache.delete(request);
+      
       const {
         // absoluteFilePath,
         fileName,
         fileSuffixKey,
       } = snapshotFileInfo;
       if (LOG_REQ) {
-        const summary = `----------\n${request.method} ${request.url}\nWould use file name: ${fileName}`;
+        const summary = `----------\n${request.method} ${request.url}\n${
+          shouldIgnoreSnapshot
+            ? 'ignored from snapshotting by ignore rules'
+            : `Would use file name: ${fileName}`
+        }`;
         if (LOG_REQ === '1' || LOG_REQ === 'summary') {
           console.debug(summary);
         } else if (LOG_REQ === 'detailed') {
@@ -664,7 +745,7 @@ function start({
           });
         }
       }
-      if (SNAPSHOT === 'update' || (SNAPSHOT === 'append' && !readFiles.has(fileName))) {
+      if (!shouldIgnoreSnapshot && (SNAPSHOT === 'update' || (SNAPSHOT === 'append' && !readFiles.has(fileName)))) {
         if (!dirCreatePromise) {
           dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
         }
@@ -691,6 +772,9 @@ module.exports = {
   defaultSnapshotFileNameGenerator,
   attachSnapshotFilenameGenerator,
   resetSnapshotFilenameGenerator,
+  defaultSnapshotIgnoreRules,
+  attachSnapshotIgnoreRules,
+  resetSnapshotIgnoreRules,
   start,
   stop,
 };
