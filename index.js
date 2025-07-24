@@ -87,9 +87,26 @@ let snapshotDirectory = null;
  * @property {string[][]} response.headers
  * @property {object|undefined} response.body
  */
+/**
+ * @typedef SnapshotBinary
+ * @property {string} fileSuffixKey
+ * @property {'json'|'text'} requestType
+ * @property {object} request
+ * @property {string} request.method
+ * @property {string} request.url
+ * @property {string[][]} request.headers
+ * @property {string|object|undefined} request.body
+ * @property {'binary'} responseType
+ * @property {string} [compression]
+ * @property {object} response
+ * @property {number} response.status
+ * @property {string} response.statusText
+ * @property {string[][]} response.headers
+ * @property {string} response.body
+ */
 
 /**
- * @typedef {SnapshotText | SnapshotJson} Snapshot
+ * @typedef {SnapshotText | SnapshotJson | SnapshotBinary} Snapshot
  */
 
 /**
@@ -97,6 +114,15 @@ let snapshotDirectory = null;
  */
 
 const dynamodbHostNameRegex = /^(?:dynamodb|\d+\.ddb)\.([^.]+)\.amazonaws\.com$/;
+
+/**
+ * @param {string} contentType
+ * @returns {boolean}
+ */
+function isBinaryContentType(contentType) {
+  // vnd. = vendor-specific formats, specific x- formats that are binary
+  return /^(application\/(pdf|zip|octet-stream|x-tar|x-rar-compressed|x-executable|vnd\.|font-)|image\/|video\/|audio\/|font\/)/.test(contentType);
+}
 
 const defaultKeyDerivationProps = ['method', 'url', 'body'];
 /**
@@ -144,7 +170,10 @@ async function defaultSnapshotFileNameGenerator(request) {
  * @param {Request} request 
  * @returns {boolean}
  */
-function defaultSnapshotIgnoreRules(request) {
+function defaultSnapshotIgnoreRules(
+  // @ts-ignore
+  request,
+) {
   return false;
 }
 
@@ -241,10 +270,26 @@ async function saveSnapshot(request, response, snapshotFileInfo) {
       requestType = 'text';
     }
 
-    /** @type {'text' | 'json'} */
+    /** @type {'text' | 'json' | 'binary'} */
     let responseType;
+    /** @type {string|undefined} */
+    let compression;
     const resContentType = response.headers.get('content-type') || '';
-    if (resContentType.includes('application/json') || resContentType.includes('application/x-amz-json-1.0')) {
+    
+    if (isBinaryContentType(resContentType)) {
+      responseType = 'binary';
+      const hasServerCompression = response.headers.get('content-encoding');
+      const binaryData = await response.clone().arrayBuffer();
+      
+      if (hasServerCompression) {
+        compression = undefined;
+        responseBody = Buffer.from(binaryData).toString('base64');
+      } else {
+        compression = 'gzip';
+        const compressed = await gzip(new Uint8Array(binaryData));
+        responseBody = compressed.toString('base64');
+      }
+    } else if (resContentType.includes('application/json') || resContentType.includes('application/x-amz-json-1.0')) {
       try {
         responseBody = await response.clone().json();
         responseType = 'json';
@@ -256,6 +301,7 @@ async function saveSnapshot(request, response, snapshotFileInfo) {
       responseBody = await response.clone().text();
       responseType = 'text';
     }
+    
     /** @type {Snapshot} */
     const snapshot = {
       requestType,
@@ -273,7 +319,9 @@ async function saveSnapshot(request, response, snapshotFileInfo) {
         body: responseBody,
       },
       fileSuffixKey,
+      ...(responseType === 'binary' && { compression }),
     };
+    
     const json = JSON.stringify(snapshot, null, 2);
     const dir = dirname(absoluteFilePath);
     if (!existingSubDirectories.has(dir)) {
@@ -460,6 +508,33 @@ function showColoredDiff(differences) {
  * @param {RequestController} controller
  * @param {Snapshot} snapshot
  */
+/**
+ * @param {Buffer|string} data
+ * @param {string} encoding
+ * @returns {Promise<Buffer>}
+ */
+async function applyContentEncoding(data, encoding) {
+  const input = typeof data === 'string' ? data : new Uint8Array(data);
+  
+  if (encoding.includes('br')) {
+    return await brotliCompress(input);
+  } else if (encoding.includes('gzip')) {
+    return await gzip(input);
+  } else if (encoding.includes('deflate')) {
+    return await deflate(input);
+  } else if (encoding.includes('compress')) {
+    throw new Error('compress encoding not supported');
+  } else if (encoding.includes('zstd')) {
+    throw new Error('zstd encoding not supported');
+  } else {
+    return Buffer.from(typeof data === 'string' ? data : new Uint8Array(data));
+  }
+}
+
+/**
+ * @param {RequestController} controller
+ * @param {Snapshot} snapshot
+ */
 async function sendResponse(controller, snapshot) {
   const {
     responseType,
@@ -471,34 +546,31 @@ async function sendResponse(controller, snapshot) {
     },
   } = snapshot;
 
-  /** @type {string} */
-  let encodedBody = responseType === 'json'
-    ? JSON.stringify(body)
-    : /** @type {string} */ (body || '');
   /** @type {Buffer} */
   let bufferBody;
-  const contentEncoding = headers.find(tuple => tuple[0]?.toLowerCase() === 'content-encoding');
-
-  if (contentEncoding) {
-    if (contentEncoding[1].includes('br')) {
-      bufferBody = await brotliCompress(encodedBody);
-    } else if (contentEncoding[1].includes('gzip')) {
-      bufferBody = await gzip(encodedBody);
-    } else if (contentEncoding[1].includes('deflate')) {
-      bufferBody = await deflate(encodedBody);
-    } else if (contentEncoding[1].includes('compress')) {
-      // Most servers don't send compress responses and node.js
-      // doesn't have built-in compress support even for fetch().
-      throw new Error('compress encoding not supported');
-    } else if (contentEncoding[1].includes('zstd')) {
-      // Node.js doesn't have built-in zstd support at the moment
-      throw new Error('zstd encoding not supported');
+  
+  if (responseType === 'binary') {
+    //@ts-ignore
+    const compression = snapshot.compression;
+    const binaryData = Buffer.from(/** @type {string} */ (body), 'base64');
+    
+    if (compression) {
+      const { gunzip } = require('node:zlib');
+      const gunzipPromise = promisify(gunzip);
+      bufferBody = await gunzipPromise(new Uint8Array(binaryData));
     } else {
-      // Unknown content-encoding fallback
-      bufferBody = Buffer.from(encodedBody);
+      bufferBody = binaryData;
     }
   } else {
-    bufferBody = Buffer.from(encodedBody)
+    const encodedBody = responseType === 'json'
+      ? JSON.stringify(body)
+      : /** @type {string} */ (body || '');
+    bufferBody = Buffer.from(encodedBody);
+  }
+  
+  const contentEncoding = headers.find(/** @param {string[]} tuple */ tuple => tuple[0]?.toLowerCase() === 'content-encoding');
+  if (contentEncoding) {
+    bufferBody = await applyContentEncoding(bufferBody, contentEncoding[1]);
   }
 
   const newResponse = new Response(
@@ -506,9 +578,8 @@ async function sendResponse(controller, snapshot) {
     {
       status,
       statusText,
-      headers: new Headers(/** @type HeadersInit */ (headers.map((tuple) => {
-        // We reformatted the json and removed spaces, so it's content-length may not be same as original
-        if (tuple[0] === 'content-length' && responseType === 'json') {
+      headers: new Headers(/** @type HeadersInit */ (headers.map(/** @param {string[]} tuple */ (tuple) => {
+        if (tuple[0] === 'content-length' && (responseType === 'json' || responseType === 'binary')) {
           return [tuple[0], bufferBody.byteLength];
         }
         return tuple;

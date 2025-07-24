@@ -1,3 +1,15 @@
+export type SnapshotFileInfo = {
+    absoluteFilePath: string;
+    /**
+     * in format filePrefix-hash.json`
+     */
+    fileName: string;
+    filePrefix: string;
+    /**
+     * The string that would be hashed to be suffixed to the snapshot file name
+     */
+    fileSuffixKey: string;
+};
 export type SnapshotText = {
     fileSuffixKey: string;
     requestType: 'json' | 'text';
@@ -32,8 +44,26 @@ export type SnapshotJson = {
         body: object | undefined;
     };
 };
-export type Snapshot = SnapshotText | SnapshotJson;
-export type SnapshotFileInfo = Awaited<ReturnType<typeof getSnapshotFileInfo>>;
+export type SnapshotBinary = {
+    fileSuffixKey: string;
+    requestType: 'json' | 'text';
+    request: {
+        method: string;
+        url: string;
+        headers: string[][];
+        body: string | object | undefined;
+    };
+    responseType: 'binary';
+    compression?: string | undefined;
+    response: {
+        status: number;
+        statusText: string;
+        headers: string[][];
+        body: string;
+    };
+};
+export type Snapshot = SnapshotText | SnapshotJson | SnapshotBinary;
+export type DiffChange = import('diff').Change;
 export type ReadSnapshotReturnType = Promise<{
     snapshot: Snapshot;
     absoluteFilePath: string;
@@ -84,6 +114,36 @@ export function attachSnapshotFilenameGenerator(func: (req: Request) => Promise<
 /** Reset snapshot filename generator to default */
 export function resetSnapshotFilenameGenerator(): void;
 /**
+ * Default snapshot ignore rules - by default no requests are ignored
+ * @param {Request} request
+ * @returns {boolean}
+ */
+export function defaultSnapshotIgnoreRules(request: Request): boolean;
+/**
+ * Attach snapshot ignore rules function
+ *
+ * Here's your opportunity to define custom rules for ignoring requests from being snapshotted.
+ * The function receives the Request object and should return true if the request should be ignored.
+ *
+ * IMPORTANT: Behavior varies by SNAPSHOT mode:
+ * - SNAPSHOT=update/append: Ignored requests make real network calls but don't create snapshots
+ * - SNAPSHOT=read: Ignored requests throw an error (tests shouldn't make real network calls)
+ *
+ * Use cases (not limited to):
+ * 1. Ignore requests with specific headers (e.g., x-debug-mode: no-snapshot)
+ * 2. Ignore requests to specific URLs or domains
+ * 3. Ignore requests with specific HTTP methods
+ * 4. Ignore requests based on request body content
+ *
+ * WARNING: Attaching a function on a per-test basis may not be concurrent safe. i.e. If your tests
+ * run sequentially, then it is safe. But if your test runner runs test suites concurrently,
+ * then it is better to attach a function only once ever.
+ * @param {(req: Request) => boolean} func
+ */
+export function attachSnapshotIgnoreRules(func: (req: Request) => boolean): void;
+/** Reset snapshot ignore rules to default (no requests ignored) */
+export function resetSnapshotIgnoreRules(): void;
+/**
  * Start the interceptor
  * @param {object} opts
  * @param {string|null} opts.snapshotDirectory Full absolute path to snapshot directory
@@ -93,13 +153,3 @@ export function start({ snapshotDirectory: _snapshotDirectory, }?: {
 }): void;
 /** Stop the interceptor */
 export function stop(): void;
-/**
- * @param {Request} request
- */
-declare function getSnapshotFileInfo(request: Request): Promise<{
-    absoluteFilePath: string;
-    fileName: string;
-    filePrefix: string;
-    fileSuffixKey: string;
-}>;
-export {};
