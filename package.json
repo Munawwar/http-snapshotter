@@ -12,6 +12,11 @@
   "publishConfig": {
     "access": "public"
   },
+  "files": [
+    "index.js",
+    "index.mjs",
+    "index.d.ts"
+  ],
   "scripts": {
     "test": "tape tests/**/*.test.* | tap-arc",
     "tsc": "tsc"
