@@ -162,10 +162,10 @@ async function defaultSnapshotFileNameGenerator(request) {
 
 /**
  * Default snapshot ignore rules - by default no requests are ignored
- * @param {Request} request 
+ * @param {Request} _request
  * @returns {boolean}
  */
-function defaultSnapshotIgnoreRules(request) {
+function defaultSnapshotIgnoreRules(_request) {
   return false;
 }
 
