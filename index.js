@@ -98,6 +98,19 @@ let snapshotDirectory = null;
 
 const dynamodbHostNameRegex = /^(?:dynamodb|\d+\.ddb)\.([^.]+)\.amazonaws\.com$/;
 
+/**
+ * Stable JSON stringify with sorted keys for deterministic hashing
+ * @param {any} val
+ * @returns {string}
+ */
+function stableStringify(val) {
+  if (typeof val !== 'object' || val === null) return JSON.stringify(val);
+  if (Array.isArray(val)) return '[' + val.map(stableStringify).join(',') + ']';
+  return '{' + Object.keys(val).sort().map(k =>
+    JSON.stringify(k) + ':' + stableStringify(val[k])
+  ).join(',') + '}';
+}
+
 const defaultKeyDerivationProps = ['method', 'url', 'body'];
 /**
  * @param {Request} request 
@@ -124,8 +137,16 @@ async function defaultSnapshotFileNameGenerator(request) {
 
   // Input data
   const dataList = await Promise.all(
-    defaultKeyDerivationProps.map((key) => {
+    defaultKeyDerivationProps.map(async (key) => {
       if (key === 'body') {
+        const contentType = request.headers.get('content-type') || '';
+        if (contentType.includes('application/json') || contentType.includes('application/x-amz-json')) {
+          try {
+            return stableStringify(await request.clone().json());
+          } catch (e) {
+            // Not valid JSON, fall back to text
+          }
+        }
         return request.clone().text();
       }
       //@ts-ignore
@@ -141,10 +162,10 @@ async function defaultSnapshotFileNameGenerator(request) {
 
 /**
  * Default snapshot ignore rules - by default no requests are ignored
- * @param {Request} request 
+ * @param {Request} _request
  * @returns {boolean}
  */
-function defaultSnapshotIgnoreRules(request) {
+function defaultSnapshotIgnoreRules(_request) {
   return false;
 }
 
