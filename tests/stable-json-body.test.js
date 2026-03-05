@@ -76,3 +76,77 @@ test("Non-JSON body remains unchanged", async (t) => {
 
   t.end();
 });
+
+test("DynamoDB regional and account endpoints normalize to same key", async (t) => {
+  const body = JSON.stringify({
+    TableName: "DEV_ClientIDAccess",
+    Key: { clientId: { S: "some-random-client-id" } },
+    ConsistentRead: true,
+  });
+
+  const request1 = new Request("https://dynamodb.eu-west-1.amazonaws.com/", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-amz-json-1.0",
+      "x-amz-target": "DynamoDB_20120810.GetItem",
+    },
+    body,
+  });
+
+  const request2 = new Request("https://123456789012.dynamodb.eu-west-1.amazonaws.com/", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-amz-json-1.0",
+      "x-amz-target": "DynamoDB_20120810.GetItem",
+    },
+    body,
+  });
+
+  const result1 = await defaultSnapshotFileNameGenerator(request1);
+  const result2 = await defaultSnapshotFileNameGenerator(request2);
+
+  t.equal(
+    result1.fileSuffixKey,
+    result2.fileSuffixKey,
+    "DynamoDB endpoint variants should derive same fileSuffixKey"
+  );
+
+  t.end();
+});
+
+test("Legacy ddb endpoint normalizes to regional DynamoDB key", async (t) => {
+  const body = JSON.stringify({
+    TableName: "DEV_ClientIDAccess",
+    Key: { clientId: { S: "some-random-client-id" } },
+    ConsistentRead: true,
+  });
+
+  const request1 = new Request("https://dynamodb.eu-west-1.amazonaws.com/", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-amz-json-1.0",
+      "x-amz-target": "DynamoDB_20120810.GetItem",
+    },
+    body,
+  });
+
+  const request2 = new Request("https://123456789012.ddb.eu-west-1.amazonaws.com/", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-amz-json-1.0",
+      "x-amz-target": "DynamoDB_20120810.GetItem",
+    },
+    body,
+  });
+
+  const result1 = await defaultSnapshotFileNameGenerator(request1);
+  const result2 = await defaultSnapshotFileNameGenerator(request2);
+
+  t.equal(
+    result1.fileSuffixKey,
+    result2.fileSuffixKey,
+    "Legacy ddb endpoint should map to same fileSuffixKey"
+  );
+
+  t.end();
+});
