@@ -96,7 +96,7 @@ let snapshotDirectory = null;
  * @typedef {import('diff').Change} DiffChange
  */
 
-const dynamodbHostNameRegex = /^(?:dynamodb|\d+\.ddb)\.([^.]+)\.amazonaws\.com$/;
+const dynamodbHostNameRegex = /^(?:\d+\.)?(?:dynamodb|ddb)\.([^.]+)\.amazonaws\.com$/;
 
 /**
  * Stable JSON stringify with sorted keys for deterministic hashing
@@ -119,11 +119,18 @@ async function defaultSnapshotFileNameGenerator(request) {
   let filePrefix;
 
   const url = new URL(request.url);
-  const matches = url.hostname.match(dynamodbHostNameRegex)
-  if (matches) {
+  const dynamodbRegion = url.hostname.match(dynamodbHostNameRegex)?.[1] || '';
+  const normalizedRequestUrl = (() => {
+    if (!dynamodbRegion) return request.url;
+    const normalizedUrl = new URL(request.url);
+    normalizedUrl.hostname = `dynamodb.${dynamodbRegion}.amazonaws.com`;
+    return normalizedUrl.toString();
+  })();
+
+  if (dynamodbRegion) {
     filePrefix = [
       'dynamodb',
-      matches[1], // e.g. eu-west-1
+      dynamodbRegion, // e.g. eu-west-1
       slugify(request.headers?.get?.('x-amz-target')?.split?.('.')?.pop?.() || ''), // e.g. get-item, put-item
       slugify(JSON.parse(await request.clone().text())?.TableName),
     ].filter(Boolean).join('-');
@@ -148,6 +155,9 @@ async function defaultSnapshotFileNameGenerator(request) {
           }
         }
         return request.clone().text();
+      }
+      if (key === 'url') {
+        return normalizedRequestUrl;
       }
       //@ts-ignore
       return request[key];
