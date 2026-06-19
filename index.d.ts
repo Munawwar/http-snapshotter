@@ -126,6 +126,28 @@ export function attachSnapshotIgnoreRules(func: (req: Request) => boolean): void
 /** Reset snapshot ignore rules to default (no requests ignored) */
 export function resetSnapshotIgnoreRules(): void;
 /**
+ * Default snapshot passthrough rules - by default no requests bypass snapshotting
+ * @param {Request} _request
+ * @returns {boolean}
+ */
+export function defaultSnapshotPassthroughRules(_request: Request): boolean;
+/**
+ * Attach snapshot passthrough rules function
+ *
+ * Use this when a request should explicitly bypass snapshotting and always be allowed to hit
+ * the real network, regardless of SNAPSHOT mode.
+ *
+ * Passthrough rules take precedence over ignore rules.
+ *
+ * WARNING: Attaching a function on a per-test basis may not be concurrent safe. i.e. If your tests
+ * run sequentially, then it is safe. But if your test runner runs test suites concurrently,
+ * then it is better to attach a function only once ever.
+ * @param {(req: Request) => boolean} func
+ */
+export function attachSnapshotPassthroughRules(func: (req: Request) => boolean): void;
+/** Reset snapshot passthrough rules to default (no requests bypass snapshotting) */
+export function resetSnapshotPassthroughRules(): void;
+/**
  * Start the interceptor
  * @param {object} opts
  * @param {string|null} opts.snapshotDirectory Full absolute path to snapshot directory

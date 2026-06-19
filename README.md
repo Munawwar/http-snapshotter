@@ -230,3 +230,28 @@ resetSnapshotIgnoreRules();
 **Behavior varies by mode:**
 - `SNAPSHOT=update/append`: Ignored requests make real network calls but don't create snapshots
 - `SNAPSHOT=read`: Ignored requests throw an error (tests shouldn't make real network calls)
+
+## Passthrough requests from snapshots
+
+If a request should explicitly be allowed to hit the real network in every mode, including
+`SNAPSHOT=read`, use `attachSnapshotPassthroughRules()` instead:
+
+```js
+import {
+  attachSnapshotPassthroughRules,
+  resetSnapshotPassthroughRules,
+} from "http-snapshotter";
+
+attachSnapshotPassthroughRules((request) => {
+  const url = new URL(request.url);
+  return url.hostname === "portal.sso.eu-west-1.amazonaws.com"
+    && url.pathname === "/federation/credentials";
+});
+
+resetSnapshotPassthroughRules();
+```
+
+**Behavior:**
+- Requests matching passthrough rules always make real network calls
+- Requests matching passthrough rules never create or read snapshots
+- Passthrough rules take precedence over ignore rules

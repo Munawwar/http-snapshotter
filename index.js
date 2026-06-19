@@ -179,6 +179,15 @@ function defaultSnapshotIgnoreRules(_request) {
   return false;
 }
 
+/**
+ * Default snapshot passthrough rules - by default no requests bypass snapshotting
+ * @param {Request} _request
+ * @returns {boolean}
+ */
+function defaultSnapshotPassthroughRules(_request) {
+  return false;
+}
+
 // Dynamically changeable props
 /**
  * @type {(req: Request) => Promise<{ filePrefix: string, fileSuffixKey: string }>}
@@ -190,6 +199,10 @@ let snapshotSubDirectory = '';
  * @type {(req: Request) => boolean}
  */
 let snapshotIgnoreRules = defaultSnapshotIgnoreRules;
+/**
+ * @type {(req: Request) => boolean}
+ */
+let snapshotPassthroughRules = defaultSnapshotPassthroughRules;
 
 /**
  * @typedef SnapshotFileInfo
@@ -675,6 +688,28 @@ function resetSnapshotIgnoreRules() {
 }
 
 /**
+ * Attach snapshot passthrough rules function
+ *
+ * Use this when a request should explicitly bypass snapshotting and always be allowed to hit
+ * the real network, regardless of SNAPSHOT mode.
+ *
+ * Passthrough rules take precedence over ignore rules.
+ *
+ * WARNING: Attaching a function on a per-test basis may not be concurrent safe. i.e. If your tests
+ * run sequentially, then it is safe. But if your test runner runs test suites concurrently,
+ * then it is better to attach a function only once ever.
+ * @param {(req: Request) => boolean} func
+ */
+function attachSnapshotPassthroughRules(func) {
+  snapshotPassthroughRules = func;
+}
+
+/** Reset snapshot passthrough rules to default (no requests bypass snapshotting) */
+function resetSnapshotPassthroughRules() {
+  snapshotPassthroughRules = defaultSnapshotPassthroughRules;
+}
+
+/**
  * Start the interceptor
  * @param {object} opts
  * @param {string|null} opts.snapshotDirectory Full absolute path to snapshot directory
@@ -701,9 +736,16 @@ function start({
 
   const cache = /** @type {WeakMap<Request, SnapshotFileInfo>} */ (new WeakMap());
   const ignoredRequests = /** @type {WeakSet<Request>} */ (new WeakSet());
+  const passthroughRequests = /** @type {WeakSet<Request>} */ (new WeakSet());
 
   //@ts-ignore
   interceptor.on('request', async ({ request, controller }) => {
+    const shouldPassthroughSnapshot = snapshotPassthroughRules(request);
+    if (shouldPassthroughSnapshot) {
+      passthroughRequests.add(request);
+      return;
+    }
+
     // Check if request should be ignored from snapshotting using ignore rules
     const shouldIgnoreSnapshot = snapshotIgnoreRules(request);
     
@@ -739,19 +781,22 @@ function start({
     'response',
     /** @type {(params: { request: Request, response: Response }) => Promise<void>} */
     async ({ request, response }) => {
+      const shouldPassthroughSnapshot = passthroughRequests.has(request);
       // Check if this request was marked to ignore snapshots
       const shouldIgnoreSnapshot = ignoredRequests.has(request);
-      
-      const snapshotFileInfo = cache.get(request) || (await getSnapshotFileInfo(request));
+
+      const snapshotFileInfo = shouldPassthroughSnapshot
+        ? null
+        : (cache.get(request) || (await getSnapshotFileInfo(request)));
       cache.delete(request);
-      
-      const {
-        // absoluteFilePath,
-        fileName,
-        fileSuffixKey,
-      } = snapshotFileInfo;
+
+      const fileName = snapshotFileInfo?.fileName;
+      const fileSuffixKey = snapshotFileInfo?.fileSuffixKey;
       if (LOG_REQ) {
         const summary = `----------\n${request.method} ${request.url}\n${
+          shouldPassthroughSnapshot
+            ? 'passed through by passthrough rules'
+            :
           shouldIgnoreSnapshot
             ? 'ignored from snapshotting by ignore rules'
             : `Would use file name: ${fileName}`
@@ -776,12 +821,14 @@ function start({
           });
         }
       }
-      if (!shouldIgnoreSnapshot && (SNAPSHOT === 'update' || (SNAPSHOT === 'append' && !readFiles.has(fileName)))) {
+      if (!shouldPassthroughSnapshot
+        && !shouldIgnoreSnapshot
+        && (SNAPSHOT === 'update' || (SNAPSHOT === 'append' && !readFiles.has(fileName)))) {
         if (!dirCreatePromise) {
           dirCreatePromise = fs.mkdir( /** @type {string} */(snapshotDirectory), { recursive: true });
         }
         await dirCreatePromise;
-        await saveSnapshot(request, response, snapshotFileInfo);
+        await saveSnapshot(request, response, /** @type {SnapshotFileInfo} */ (snapshotFileInfo));
       }
     },
   );
@@ -806,6 +853,9 @@ module.exports = {
   defaultSnapshotIgnoreRules,
   attachSnapshotIgnoreRules,
   resetSnapshotIgnoreRules,
+  defaultSnapshotPassthroughRules,
+  attachSnapshotPassthroughRules,
+  resetSnapshotPassthroughRules,
   start,
   stop,
 };
