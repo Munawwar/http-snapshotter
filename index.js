@@ -478,7 +478,7 @@ async function readExistingSnapshotFilesList(snapshotDirectory) {
     }
     existingSnapshotFilesList[dir] = files
         .filter((file) => file.isFile())
-        .map((file) => relative(dir, resolve(file.path, file.name)))
+        .map((file) => relative(dir, resolve(file.parentPath ?? file.path, file.name)))
   }
   return existingSnapshotFilesList[dir];
 }
